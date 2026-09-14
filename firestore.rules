@@ -1,29 +1,30 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function member(accountId) { return signedIn() && exists(/databases/$(database)/documents/memberships/$(accountId + "_" + request.auth.uid)); }
-    match /pairings/{pairingCode} {
-      allow create: if signedIn() && request.resource.data.creatorUid == request.auth.uid;
-      allow get: if signedIn();
-      allow update, delete: if signedIn() && resource.data.creatorUid == request.auth.uid;
+    function signedIn() {
+      return request.auth != null;
     }
-    match /memberships/{membershipId} {
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid && request.resource.data.accountId is string && request.resource.data.pairingCode is string && get(/databases/$(database)/documents/pairings/$(request.resource.data.pairingCode)).data.accountId == request.resource.data.accountId && get(/databases/$(database)/documents/pairings/$(request.resource.data.pairingCode)).data.expiresAt > request.time;
-      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+
+    match /channels/{channelCode} {
+      allow read, write: if signedIn();
+
+      match /devices/{deviceId} {
+        allow read: if signedIn();
+        allow create, update: if signedIn() && request.resource.data.uid == request.auth.uid;
+        allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      }
+
+      match /signals/{signalId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && request.resource.data.senderUid == request.auth.uid;
+        allow update, delete: if signedIn() && resource.data.senderUid == request.auth.uid;
+      }
+
+      match /transfers/{transferId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && request.resource.data.senderUid == request.auth.uid;
+        allow update, delete: if signedIn() && resource.data.senderUid == request.auth.uid;
+      }
     }
-    match /devices/{deviceId} {
-      allow read: if member(resource.data.accountId);
-      allow create: if member(request.resource.data.accountId) && request.resource.data.userId == request.auth.uid;
-      allow update: if member(resource.data.accountId) && request.resource.data.userId == request.auth.uid;
-      allow delete: if member(resource.data.accountId) && resource.data.userId == request.auth.uid;
-    }
-    match /transfers/{transferId} {
-      allow read: if member(resource.data.accountId);
-      allow create: if member(request.resource.data.accountId) && request.resource.data.userId == request.auth.uid;
-      allow update: if member(resource.data.accountId) && request.resource.data.userId == request.auth.uid;
-      allow delete: if member(resource.data.accountId) && resource.data.userId == request.auth.uid;
-    }
-    match /signaling/{sessionId} { allow read, create, update: if signedIn(); match /messages/{messageId} { allow read, write: if signedIn(); } }
   }
 }

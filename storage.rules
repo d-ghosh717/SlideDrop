@@ -1,11 +1,10 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    match /accounts/{accountId}/transfers/{transferId}/{fileName} {
-      function member() { return request.auth != null && firestore.exists(/databases/(default)/documents/memberships/$(accountId + "_" + request.auth.uid)); }
-      allow read: if member();
-      allow create, update: if member() && request.resource.size < 250 * 1024 * 1024;
-      allow delete: if member();
+    match /channels/{channelCode}/transfers/{transferId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.resource.size < 250 * 1024 * 1024;
+      allow delete: if request.auth != null;
     }
   }
 }

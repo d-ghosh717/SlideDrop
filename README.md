@@ -136,8 +136,8 @@ npm run start
 | :--- | :--- | :--- |
 | **Frontend & UI** | Next.js 16 (App Router), React 19, CSS Modules | Responsive, glassmorphic UI with drag-and-drop dropzone |
 | **P2P Transfer** | WebRTC `RTCDataChannel` | Zero-server direct transmission with 16KB chunking & backpressure |
-| **Signaling & Presence** | Next.js API Routes (`/api/channel`, `/api/signal`, `/api/transfer`) | 4-second presence heartbeat, SDP exchange, candidate queueing |
-| **Cloud Fallback** | Firebase Auth (Anonymous), Firestore, Storage | Optional cloud relay and persistent transfer history |
+| **Signaling & Presence** | Cloud Firestore (`channels/{code}/devices`, `channels/{code}/signals`) | Cross-device realtime presence heartbeat, SDP exchange, and ICE candidate delivery |
+| **Cloud Fallback** | Firebase Auth (Anonymous), Firestore, Storage | Cloud storage relay when WebRTC P2P is establishing or as backup |
 
 ---
 

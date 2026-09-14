@@ -1,4 +1,15 @@
-// Robust WebRTC P2P DataChannel connection and chunked transfer engine
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  Firestore,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  where,
+  Unsubscribe,
+} from "firebase/firestore";
 
 export type WebRTCMessage =
   | { type: "text"; id: string; text: string; senderName: string; timestamp: number }
@@ -34,7 +45,9 @@ const CHUNK_SIZE = 16 * 1024; // 16 KB chunks for reliable WebRTC transmission
 const MAX_BUFFERED_AMOUNT = 64 * 1024; // 64 KB threshold for backpressure
 
 export class WebRTCManager {
+  private db: Firestore;
   private localDeviceId: string;
+  private localUid: string;
   private channelCode: string;
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private dataChannels: Map<string, RTCDataChannel> = new Map();
@@ -45,25 +58,70 @@ export class WebRTCManager {
     receivedCount: number;
   }> = new Map();
   private callbacks: WebRTCCallbacks;
-  private signalPollingTimer: number | null = null;
-  private lastSignalTimestamp = 0;
+  private unsubscribeSignals: Unsubscribe | null = null;
+  private processedSignalIds: Set<string> = new Set();
 
-  constructor(localDeviceId: string, channelCode: string, callbacks: WebRTCCallbacks) {
+  constructor(
+    db: Firestore,
+    localDeviceId: string,
+    localUid: string,
+    channelCode: string,
+    callbacks: WebRTCCallbacks
+  ) {
+    this.db = db;
     this.localDeviceId = localDeviceId;
+    this.localUid = localUid;
     this.channelCode = channelCode.toUpperCase();
     this.callbacks = callbacks;
   }
 
   public startSignaling() {
-    if (this.signalPollingTimer) return;
-    this.pollSignals();
-    this.signalPollingTimer = window.setInterval(() => this.pollSignals(), 1000);
+    if (this.unsubscribeSignals) return;
+
+    try {
+      const signalsRef = collection(this.db, "channels", this.channelCode, "signals");
+      const q = query(signalsRef, where("recipientDeviceId", "==", this.localDeviceId));
+
+      this.unsubscribeSignals = onSnapshot(
+        q,
+        (snapshot) => {
+          snapshot.docChanges().forEach(async (change) => {
+            if (change.type === "added") {
+              const docId = change.doc.id;
+              if (this.processedSignalIds.has(docId)) return;
+              this.processedSignalIds.add(docId);
+
+              const data = change.doc.data();
+              const senderId = data.senderDeviceId as string;
+              const type = data.type as "offer" | "answer" | "candidate";
+              const payload = JSON.parse(data.data);
+
+              if (type === "offer") {
+                await this.handleOffer(senderId, payload);
+              } else if (type === "answer") {
+                await this.handleAnswer(senderId, payload);
+              } else if (type === "candidate") {
+                await this.handleCandidate(senderId, payload);
+              }
+
+              // Clean up processed signal document
+              deleteDoc(doc(this.db, "channels", this.channelCode, "signals", docId)).catch(() => {});
+            }
+          });
+        },
+        (error) => {
+          console.warn("Firestore signaling listener error:", error);
+        }
+      );
+    } catch (err) {
+      console.warn("Could not start Firestore signaling:", err);
+    }
   }
 
   public stop() {
-    if (this.signalPollingTimer) {
-      clearInterval(this.signalPollingTimer);
-      this.signalPollingTimer = null;
+    if (this.unsubscribeSignals) {
+      this.unsubscribeSignals();
+      this.unsubscribeSignals = null;
     }
     for (const [peerId, pc] of this.peerConnections.entries()) {
       pc.close();
@@ -73,6 +131,7 @@ export class WebRTCManager {
     this.dataChannels.clear();
     this.pendingCandidates.clear();
     this.incomingFiles.clear();
+    this.processedSignalIds.clear();
   }
 
   public isConnectedToPeer(peerDeviceId: string): boolean {
@@ -250,56 +309,24 @@ export class WebRTCManager {
     this.callbacks.onPeerDisconnected?.(peerDeviceId);
   }
 
-  // Polling signaling endpoint
-  private async pollSignals() {
-    try {
-      const res = await fetch(
-        `/api/signal?channel=${encodeURIComponent(this.channelCode)}&deviceId=${encodeURIComponent(this.localDeviceId)}&since=${this.lastSignalTimestamp}`
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.success && Array.isArray(data.signals)) {
-        for (const sig of data.signals) {
-          if (sig.timestamp > this.lastSignalTimestamp) {
-            this.lastSignalTimestamp = sig.timestamp;
-          }
-          if (sig.type === "offer") {
-            await this.handleOffer(sig.senderDeviceId, sig.data);
-          } else if (sig.type === "answer") {
-            await this.handleAnswer(sig.senderDeviceId, sig.data);
-          } else if (sig.type === "candidate") {
-            await this.handleCandidate(sig.senderDeviceId, sig.data);
-          }
-        }
-      }
-    } catch {
-      // Network retry on next poll interval
-    }
-  }
-
   private async sendSignal(
     recipientDeviceId: string,
     type: "offer" | "answer" | "candidate",
     data: RTCSessionDescriptionInit | RTCIceCandidateInit
   ) {
     try {
-      await fetch("/api/signal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          channelCode: this.channelCode,
-          senderDeviceId: this.localDeviceId,
-          recipientDeviceId,
-          type,
-          data,
-        }),
+      await addDoc(collection(this.db, "channels", this.channelCode, "signals"), {
+        senderDeviceId: this.localDeviceId,
+        recipientDeviceId,
+        senderUid: this.localUid,
+        type,
+        data: JSON.stringify(data),
+        createdAt: serverTimestamp(),
       });
     } catch (err) {
-      console.warn("Signal send error:", err);
+      console.warn("Firestore signal send error:", err);
     }
   }
-
-  // --- APPLICATION DATA SENDING & RECEIVING ---
 
   // Send Text Note over WebRTC DataChannel
   public sendText(text: string, senderName: string, targetPeerId?: string): boolean {
