@@ -1,0 +1,473 @@
+// Robust WebRTC P2P DataChannel connection and chunked transfer engine
+
+export type WebRTCMessage =
+  | { type: "text"; id: string; text: string; senderName: string; timestamp: number }
+  | { type: "file-meta"; transferId: string; filename: string; mimeType: string; size: number; totalChunks: number; senderName: string }
+  | { type: "file-chunk"; transferId: string; chunkIndex: number; data: string }
+  | { type: "file-complete"; transferId: string };
+
+export type WebRTCCallbacks = {
+  onPeerConnected?: (peerDeviceId: string) => void;
+  onPeerDisconnected?: (peerDeviceId: string) => void;
+  onTextMessage?: (message: { id: string; text: string; senderName: string; timestamp: number; peerDeviceId: string }) => void;
+  onFileProgress?: (transferId: string, percent: number, direction: "send" | "receive") => void;
+  onFileReceived?: (fileTransfer: {
+    id: string;
+    filename: string;
+    mimeType: string;
+    size: number;
+    downloadUrl: string;
+    senderName: string;
+    timestamp: number;
+  }) => void;
+};
+
+const ICE_SERVERS: RTCConfiguration = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+  ],
+};
+
+const CHUNK_SIZE = 16 * 1024; // 16 KB chunks for reliable WebRTC transmission
+const MAX_BUFFERED_AMOUNT = 64 * 1024; // 64 KB threshold for backpressure
+
+export class WebRTCManager {
+  private localDeviceId: string;
+  private channelCode: string;
+  private peerConnections: Map<string, RTCPeerConnection> = new Map();
+  private dataChannels: Map<string, RTCDataChannel> = new Map();
+  private pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
+  private incomingFiles: Map<string, {
+    meta: { transferId: string; filename: string; mimeType: string; size: number; totalChunks: number; senderName: string };
+    chunks: string[];
+    receivedCount: number;
+  }> = new Map();
+  private callbacks: WebRTCCallbacks;
+  private signalPollingTimer: number | null = null;
+  private lastSignalTimestamp = 0;
+
+  constructor(localDeviceId: string, channelCode: string, callbacks: WebRTCCallbacks) {
+    this.localDeviceId = localDeviceId;
+    this.channelCode = channelCode.toUpperCase();
+    this.callbacks = callbacks;
+  }
+
+  public startSignaling() {
+    if (this.signalPollingTimer) return;
+    this.pollSignals();
+    this.signalPollingTimer = window.setInterval(() => this.pollSignals(), 1000);
+  }
+
+  public stop() {
+    if (this.signalPollingTimer) {
+      clearInterval(this.signalPollingTimer);
+      this.signalPollingTimer = null;
+    }
+    for (const [peerId, pc] of this.peerConnections.entries()) {
+      pc.close();
+      this.callbacks.onPeerDisconnected?.(peerId);
+    }
+    this.peerConnections.clear();
+    this.dataChannels.clear();
+    this.pendingCandidates.clear();
+    this.incomingFiles.clear();
+  }
+
+  public isConnectedToPeer(peerDeviceId: string): boolean {
+    const dc = this.dataChannels.get(peerDeviceId);
+    return dc !== undefined && dc.readyState === "open";
+  }
+
+  public getConnectedPeerCount(): number {
+    let count = 0;
+    for (const dc of this.dataChannels.values()) {
+      if (dc.readyState === "open") count++;
+    }
+    return count;
+  }
+
+  // Handle discovered peers in channel: determine who is offerer
+  public syncPeers(remoteDeviceIds: string[]) {
+    for (const remoteId of remoteDeviceIds) {
+      if (remoteId === this.localDeviceId) continue;
+
+      if (!this.peerConnections.has(remoteId)) {
+        // Deterministic role: smaller lexicographical ID is the offerer
+        const isOfferer = this.localDeviceId < remoteId;
+        if (isOfferer) {
+          this.initiateOffer(remoteId);
+        }
+      }
+    }
+
+    // Clean up peers that left
+    for (const peerId of this.peerConnections.keys()) {
+      if (!remoteDeviceIds.includes(peerId)) {
+        this.closePeer(peerId);
+      }
+    }
+  }
+
+  private getOrCreatePeerConnection(peerDeviceId: string): RTCPeerConnection {
+    if (this.peerConnections.has(peerDeviceId)) {
+      return this.peerConnections.get(peerDeviceId)!;
+    }
+
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    this.peerConnections.set(peerDeviceId, pc);
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.sendSignal(peerDeviceId, "candidate", event.candidate.toJSON());
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed") {
+        this.closePeer(peerDeviceId);
+      }
+    };
+
+    pc.ondatachannel = (event) => {
+      this.setupDataChannel(peerDeviceId, event.channel);
+    };
+
+    return pc;
+  }
+
+  private setupDataChannel(peerDeviceId: string, channel: RTCDataChannel) {
+    this.dataChannels.set(peerDeviceId, channel);
+    channel.binaryType = "arraybuffer";
+
+    channel.onopen = () => {
+      this.callbacks.onPeerConnected?.(peerDeviceId);
+    };
+
+    channel.onclose = () => {
+      this.callbacks.onPeerDisconnected?.(peerDeviceId);
+      this.dataChannels.delete(peerDeviceId);
+    };
+
+    channel.onerror = (err) => {
+      console.warn(`DataChannel error with ${peerDeviceId}`, err);
+    };
+
+    channel.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data) as WebRTCMessage;
+        this.handleIncomingMessage(peerDeviceId, msg);
+      } catch (err) {
+        console.warn("Could not parse incoming WebRTC message", err);
+      }
+    };
+  }
+
+  private async initiateOffer(peerDeviceId: string) {
+    const pc = this.getOrCreatePeerConnection(peerDeviceId);
+    const dataChannel = pc.createDataChannel("slidedrop-p2p", { ordered: true });
+    this.setupDataChannel(peerDeviceId, dataChannel);
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await this.sendSignal(peerDeviceId, "offer", offer);
+    } catch (err) {
+      console.warn(`Error creating offer for ${peerDeviceId}:`, err);
+    }
+  }
+
+  private async handleOffer(peerDeviceId: string, offer: RTCSessionDescriptionInit) {
+    const pc = this.getOrCreatePeerConnection(peerDeviceId);
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      this.drainPendingCandidates(peerDeviceId);
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await this.sendSignal(peerDeviceId, "answer", answer);
+    } catch (err) {
+      console.warn(`Error handling offer from ${peerDeviceId}:`, err);
+    }
+  }
+
+  private async handleAnswer(peerDeviceId: string, answer: RTCSessionDescriptionInit) {
+    const pc = this.peerConnections.get(peerDeviceId);
+    if (!pc) return;
+
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      this.drainPendingCandidates(peerDeviceId);
+    } catch (err) {
+      console.warn(`Error handling answer from ${peerDeviceId}:`, err);
+    }
+  }
+
+  private async handleCandidate(peerDeviceId: string, candidate: RTCIceCandidateInit) {
+    const pc = this.peerConnections.get(peerDeviceId);
+    if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.warn(`Error adding ICE candidate from ${peerDeviceId}:`, err);
+      }
+    } else {
+      if (!this.pendingCandidates.has(peerDeviceId)) {
+        this.pendingCandidates.set(peerDeviceId, []);
+      }
+      this.pendingCandidates.get(peerDeviceId)!.push(candidate);
+    }
+  }
+
+  private async drainPendingCandidates(peerDeviceId: string) {
+    const candidates = this.pendingCandidates.get(peerDeviceId);
+    const pc = this.peerConnections.get(peerDeviceId);
+    if (candidates && pc && pc.remoteDescription) {
+      for (const cand of candidates) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand));
+        } catch (err) {
+          console.warn("Error adding drained candidate:", err);
+        }
+      }
+      this.pendingCandidates.delete(peerDeviceId);
+    }
+  }
+
+  private closePeer(peerDeviceId: string) {
+    const pc = this.peerConnections.get(peerDeviceId);
+    if (pc) {
+      pc.close();
+      this.peerConnections.delete(peerDeviceId);
+    }
+    const dc = this.dataChannels.get(peerDeviceId);
+    if (dc) {
+      dc.close();
+      this.dataChannels.delete(peerDeviceId);
+    }
+    this.pendingCandidates.delete(peerDeviceId);
+    this.callbacks.onPeerDisconnected?.(peerDeviceId);
+  }
+
+  // Polling signaling endpoint
+  private async pollSignals() {
+    try {
+      const res = await fetch(
+        `/api/signal?channel=${encodeURIComponent(this.channelCode)}&deviceId=${encodeURIComponent(this.localDeviceId)}&since=${this.lastSignalTimestamp}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.success && Array.isArray(data.signals)) {
+        for (const sig of data.signals) {
+          if (sig.timestamp > this.lastSignalTimestamp) {
+            this.lastSignalTimestamp = sig.timestamp;
+          }
+          if (sig.type === "offer") {
+            await this.handleOffer(sig.senderDeviceId, sig.data);
+          } else if (sig.type === "answer") {
+            await this.handleAnswer(sig.senderDeviceId, sig.data);
+          } else if (sig.type === "candidate") {
+            await this.handleCandidate(sig.senderDeviceId, sig.data);
+          }
+        }
+      }
+    } catch {
+      // Network retry on next poll interval
+    }
+  }
+
+  private async sendSignal(
+    recipientDeviceId: string,
+    type: "offer" | "answer" | "candidate",
+    data: RTCSessionDescriptionInit | RTCIceCandidateInit
+  ) {
+    try {
+      await fetch("/api/signal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channelCode: this.channelCode,
+          senderDeviceId: this.localDeviceId,
+          recipientDeviceId,
+          type,
+          data,
+        }),
+      });
+    } catch (err) {
+      console.warn("Signal send error:", err);
+    }
+  }
+
+  // --- APPLICATION DATA SENDING & RECEIVING ---
+
+  // Send Text Note over WebRTC DataChannel
+  public sendText(text: string, senderName: string, targetPeerId?: string): boolean {
+    const msg: WebRTCMessage = {
+      type: "text",
+      id: "txt_" + Math.random().toString(36).substring(2, 10),
+      text,
+      senderName,
+      timestamp: Date.now(),
+    };
+    const payload = JSON.stringify(msg);
+
+    let sent = false;
+    for (const [peerId, dc] of this.dataChannels.entries()) {
+      if (targetPeerId && targetPeerId !== "all" && peerId !== targetPeerId) continue;
+      if (dc.readyState === "open") {
+        dc.send(payload);
+        sent = true;
+      }
+    }
+    return sent;
+  }
+
+  // Send File with Chunking & Backpressure over WebRTC DataChannel
+  public async sendFile(
+    file: File,
+    senderName: string,
+    targetPeerId?: string,
+    onProgress?: (percent: number) => void
+  ): Promise<boolean> {
+    const openChannels: RTCDataChannel[] = [];
+    for (const [peerId, dc] of this.dataChannels.entries()) {
+      if (targetPeerId && targetPeerId !== "all" && peerId !== targetPeerId) continue;
+      if (dc.readyState === "open") openChannels.push(dc);
+    }
+
+    if (openChannels.length === 0) return false;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const totalBytes = arrayBuffer.byteLength;
+    const totalChunks = Math.ceil(totalBytes / CHUNK_SIZE);
+    const transferId = "tr_" + Math.random().toString(36).substring(2, 10);
+
+    // 1. Send file metadata header
+    const metaMsg: WebRTCMessage = {
+      type: "file-meta",
+      transferId,
+      filename: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: totalBytes,
+      totalChunks,
+      senderName,
+    };
+    const metaPayload = JSON.stringify(metaMsg);
+    for (const dc of openChannels) dc.send(metaPayload);
+
+    // Helper: convert ArrayBuffer slice to base64 string
+    const bufferToBase64 = (buf: ArrayBuffer): string => {
+      let binary = "";
+      const bytes = new Uint8Array(buf);
+      const len = bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    };
+
+    // 2. Stream chunks with backpressure
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, totalBytes);
+      const chunkData = bufferToBase64(arrayBuffer.slice(start, end));
+
+      const chunkMsg: WebRTCMessage = {
+        type: "file-chunk",
+        transferId,
+        chunkIndex: i,
+        data: chunkData,
+      };
+      const chunkPayload = JSON.stringify(chunkMsg);
+
+      for (const dc of openChannels) {
+        // Manage backpressure if buffer is full
+        if (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+          await new Promise<void>((resolve) => {
+            const onLow = () => {
+              dc.removeEventListener("bufferedamountlow", onLow);
+              resolve();
+            };
+            dc.bufferedAmountLowThreshold = MAX_BUFFERED_AMOUNT / 2;
+            dc.addEventListener("bufferedamountlow", onLow);
+          });
+        }
+        dc.send(chunkPayload);
+      }
+
+      const percent = Math.round(((i + 1) / totalChunks) * 100);
+      onProgress?.(percent);
+      this.callbacks.onFileProgress?.(transferId, percent, "send");
+    }
+
+    // 3. Send completion notice
+    const completeMsg: WebRTCMessage = { type: "file-complete", transferId };
+    const completePayload = JSON.stringify(completeMsg);
+    for (const dc of openChannels) dc.send(completePayload);
+
+    return true;
+  }
+
+  // Handle incoming data packets
+  private handleIncomingMessage(peerDeviceId: string, msg: WebRTCMessage) {
+    if (msg.type === "text") {
+      this.callbacks.onTextMessage?.({
+        id: msg.id,
+        text: msg.text,
+        senderName: msg.senderName,
+        timestamp: msg.timestamp,
+        peerDeviceId,
+      });
+    } else if (msg.type === "file-meta") {
+      this.incomingFiles.set(msg.transferId, {
+        meta: msg,
+        chunks: new Array(msg.totalChunks),
+        receivedCount: 0,
+      });
+      this.callbacks.onFileProgress?.(msg.transferId, 0, "receive");
+    } else if (msg.type === "file-chunk") {
+      const incoming = this.incomingFiles.get(msg.transferId);
+      if (!incoming) return;
+
+      incoming.chunks[msg.chunkIndex] = msg.data;
+      incoming.receivedCount++;
+
+      const percent = Math.round((incoming.receivedCount / incoming.meta.totalChunks) * 100);
+      this.callbacks.onFileProgress?.(msg.transferId, percent, "receive");
+    } else if (msg.type === "file-complete") {
+      const incoming = this.incomingFiles.get(msg.transferId);
+      if (!incoming) return;
+
+      try {
+        const byteArrays: BlobPart[] = [];
+        for (const base64Chunk of incoming.chunks) {
+          if (!base64Chunk) continue;
+          const binary = atob(base64Chunk);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          byteArrays.push(bytes.buffer as ArrayBuffer);
+        }
+
+        const blob = new Blob(byteArrays, { type: incoming.meta.mimeType });
+        const downloadUrl = URL.createObjectURL(blob);
+
+        this.callbacks.onFileReceived?.({
+          id: incoming.meta.transferId,
+          filename: incoming.meta.filename,
+          mimeType: incoming.meta.mimeType,
+          size: incoming.meta.size,
+          downloadUrl,
+          senderName: incoming.meta.senderName,
+          timestamp: Date.now(),
+        });
+      } catch (err) {
+        console.error("Error reassembling file Blob:", err);
+      } finally {
+        this.incomingFiles.delete(msg.transferId);
+      }
+    }
+  }
+}
