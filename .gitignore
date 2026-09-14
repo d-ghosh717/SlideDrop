@@ -74,3 +74,4 @@ Thumbs.db
 *.key
 *.cert
 service-account*.json
+.env*

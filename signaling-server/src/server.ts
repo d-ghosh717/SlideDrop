@@ -1,5 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
+import { FirestoreChannelSync } from "./firestore-sync";
+import { firestore } from "./firebase";
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -23,16 +25,18 @@ interface DeviceSession {
 }
 
 // In-memory channel registry: channelCode -> Map<deviceId, DeviceSession>
-const channels = new Map<string, Map<string, DeviceSession>>();
+const localChannels = new Map<string, Map<string, DeviceSession>>();
+// Firestore sync managers: channelCode -> FirestoreChannelSync
+const firestoreSyncs = new Map<string, FirestoreChannelSync>();
+
 // Socket to session mapping
 const socketSessions = new Map<WebSocket, DeviceSession>();
 
 const server = http.createServer((req, res) => {
-  // Simple health check and status endpoint
   if (req.url === "/health" || req.url === "/") {
-    const totalChannels = channels.size;
+    const totalChannels = localChannels.size;
     let totalDevices = 0;
-    for (const room of channels.values()) {
+    for (const room of localChannels.values()) {
       totalDevices += room.size;
     }
     res.writeHead(200, {
@@ -46,12 +50,12 @@ const server = http.createServer((req, res) => {
         uptime: process.uptime(),
         totalChannels,
         totalDevices,
+        firestoreSyncEnabled: !!firestore,
         timestamp: new Date().toISOString(),
       })
     );
     return;
   }
-
   res.writeHead(404, { "Content-Type": "text/plain" });
   res.end("Not Found");
 });
@@ -69,34 +73,135 @@ function normalizeChannel(code: unknown): string {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
 }
 
+function getOrCreateFirestoreSync(code: string): FirestoreChannelSync | null {
+  if (!firestore) return null;
+  if (!firestoreSyncs.has(code)) {
+    const sync = new FirestoreChannelSync(
+      code,
+      (member) => {
+        // onMemberAdded
+        const room = localChannels.get(code);
+        if (room) {
+          for (const [id, session] of room.entries()) {
+            if (id !== member.id) {
+              sendJson(session.ws, {
+                type: "device-joined",
+                channelCode: code,
+                device: member,
+              });
+            }
+          }
+        }
+      },
+      (deviceId) => {
+        // onMemberRemoved
+        const room = localChannels.get(code);
+        if (room) {
+          for (const [id, session] of room.entries()) {
+            if (id !== deviceId) {
+              sendJson(session.ws, {
+                type: "device-left",
+                channelCode: code,
+                deviceId,
+              });
+            }
+          }
+        }
+      },
+      (msg) => {
+        // onMessage
+        const room = localChannels.get(code);
+        if (room && msg.targetDeviceId) {
+          const targetSession = room.get(msg.targetDeviceId);
+          if (targetSession) {
+            sendJson(targetSession.ws, {
+              ...msg.payload,
+              type: msg.type,
+              channelCode: code,
+              fromDeviceId: msg.fromDeviceId,
+              targetDeviceId: msg.targetDeviceId,
+            });
+          }
+        }
+      }
+    );
+    sync.start();
+    firestoreSyncs.set(code, sync);
+  }
+  return firestoreSyncs.get(code)!;
+}
+
 function removeSessionFromChannel(session: DeviceSession) {
   const { channelCode, deviceId } = session;
   if (!channelCode) return;
 
-  const room = channels.get(channelCode);
+  const room = localChannels.get(channelCode);
   if (room) {
     room.delete(deviceId);
-    console.log(`[Leave] Device ${session.deviceName} (${deviceId}) left channel ${channelCode} (${room.size} remaining)`);
+    console.log(`[Leave] Device ${session.deviceName} (${deviceId}) left local channel ${channelCode} (${room.size} remaining)`);
 
-    // Notify remaining peers in the same channel
-    for (const [otherId, peer] of room.entries()) {
-      if (otherId !== deviceId) {
-        sendJson(peer.ws, {
-          type: "device-left",
-          channelCode,
-          deviceId,
-        });
+    const sync = firestoreSyncs.get(channelCode);
+    if (sync) {
+      sync.unregisterLocalDevice(deviceId);
+    } else {
+      // Notify remaining local peers
+      for (const [otherId, peer] of room.entries()) {
+        if (otherId !== deviceId) {
+          sendJson(peer.ws, {
+            type: "device-left",
+            channelCode,
+            deviceId,
+          });
+        }
       }
     }
 
     // Clean up empty channels
     if (room.size === 0) {
-      channels.delete(channelCode);
+      localChannels.delete(channelCode);
+      if (sync) {
+        sync.stop();
+        firestoreSyncs.delete(channelCode);
+      }
       console.log(`[Clean] Channel ${channelCode} is empty and was removed.`);
     }
   }
 
   session.channelCode = "";
+}
+
+async function forwardSignalingMessage(session: DeviceSession, msg: any, type: string) {
+  const { targetDeviceId, fromDeviceId, sdp, candidate } = msg;
+  const code = session.channelCode;
+  if (!code || !localChannels.has(code)) {
+    sendJson(session.ws, { type: "error", message: "Not in a channel." });
+    return;
+  }
+
+  const room = localChannels.get(code)!;
+  const targetSession = room.get(targetDeviceId);
+  
+  const payload = sdp ? { sdp } : candidate ? { candidate } : {};
+
+  if (targetSession) {
+    // Fast path: target is connected to the same instance
+    sendJson(targetSession.ws, {
+      ...payload,
+      type,
+      channelCode: code,
+      fromDeviceId: fromDeviceId || session.deviceId,
+      targetDeviceId,
+    });
+  } else {
+    // Try Firestore pubsub
+    const sync = firestoreSyncs.get(code);
+    if (sync) {
+      const sent = await sync.sendMessage(targetDeviceId, fromDeviceId || session.deviceId, type, payload);
+      if (!sent) {
+        console.warn(`[Warn] Failed to route ${type} to ${targetDeviceId}`);
+      }
+    }
+  }
 }
 
 wss.on("connection", (ws: WebSocket, req) => {
@@ -121,13 +226,12 @@ wss.on("connection", (ws: WebSocket, req) => {
     session.lastPing = Date.now();
   });
 
-  ws.on("message", (raw: Buffer | string) => {
+  ws.on("message", async (raw: Buffer | string) => {
     try {
       const msg = JSON.parse(raw.toString());
       const { type } = msg;
 
       switch (type) {
-        // 1. Join Channel
         case "join": {
           const rawCode = msg.channelCode;
           const code = normalizeChannel(rawCode);
@@ -136,7 +240,7 @@ wss.on("connection", (ws: WebSocket, req) => {
           const platform = typeof msg.platform === "string" ? msg.platform : "browser";
 
           if (!code || code.length < 3) {
-            sendJson(ws, { type: "error", message: "Invalid channel code (must be 3-12 alphanumeric characters)." });
+            sendJson(ws, { type: "error", message: "Invalid channel code." });
             return;
           }
 
@@ -145,7 +249,6 @@ wss.on("connection", (ws: WebSocket, req) => {
             return;
           }
 
-          // If already in a channel, leave it first
           if (session.channelCode && session.channelCode !== code) {
             removeSessionFromChannel(session);
           }
@@ -157,83 +260,95 @@ wss.on("connection", (ws: WebSocket, req) => {
           session.joinedAt = Date.now();
           session.isAlive = true;
 
-          if (!channels.has(code)) {
-            channels.set(code, new Map());
+          if (!localChannels.has(code)) {
+            localChannels.set(code, new Map());
           }
-
-          const room = channels.get(code)!;
-          // If socket for same device ID was already in room, clean it up
+          const room = localChannels.get(code)!;
+          
           const existing = room.get(rawDeviceId);
           if (existing && existing.ws !== ws) {
-            sendJson(existing.ws, { type: "error", message: "Device reconnected from another session." });
+            sendJson(existing.ws, { type: "error", message: "Device reconnected." });
             existing.ws.close();
           }
 
           room.set(rawDeviceId, session);
+          console.log(`[Join] Device "${session.deviceName}" (${session.deviceId}) joined channel "${code}"`);
 
-          console.log(`[Join] Device "${session.deviceName}" (${session.deviceId}) joined channel "${code}" (${room.size} devices)`);
-
-          // Collect current members in room (excluding self)
-          const membersList: DeviceInfo[] = [];
-          for (const [otherId, peer] of room.entries()) {
-            if (otherId !== session.deviceId) {
-              membersList.push({
-                id: peer.deviceId,
-                name: peer.deviceName,
-                platform: peer.platform,
-                joinedAt: peer.joinedAt,
-              });
+          const sync = getOrCreateFirestoreSync(code);
+          
+          if (sync) {
+            await sync.registerLocalDevice({
+              id: session.deviceId,
+              name: session.deviceName,
+              platform: session.platform,
+              joinedAt: session.joinedAt
+            });
+            
+            sendJson(ws, {
+              type: "joined",
+              channelCode: code,
+              self: { id: session.deviceId, name: session.deviceName, platform: session.platform, joinedAt: session.joinedAt },
+              devices: sync.getAllMembers().filter(m => m.id !== session.deviceId),
+            });
+          } else {
+            // Local memory fallback mode
+            const membersList: DeviceInfo[] = [];
+            for (const [otherId, peer] of room.entries()) {
+              if (otherId !== session.deviceId) {
+                membersList.push({
+                  id: peer.deviceId,
+                  name: peer.deviceName,
+                  platform: peer.platform,
+                  joinedAt: peer.joinedAt,
+                });
+              }
             }
-          }
+            sendJson(ws, {
+              type: "joined",
+              channelCode: code,
+              self: { id: session.deviceId, name: session.deviceName, platform: session.platform, joinedAt: session.joinedAt },
+              devices: membersList,
+            });
 
-          // Acknowledge to joining device with list of existing peers
-          sendJson(ws, {
-            type: "joined",
-            channelCode: code,
-            self: {
+            const newMemberInfo: DeviceInfo = {
               id: session.deviceId,
               name: session.deviceName,
               platform: session.platform,
               joinedAt: session.joinedAt,
-            },
-            devices: membersList,
-          });
-
-          // Broadcast to existing peers that a new device joined
-          const newMemberInfo: DeviceInfo = {
-            id: session.deviceId,
-            name: session.deviceName,
-            platform: session.platform,
-            joinedAt: session.joinedAt,
-          };
-
-          for (const [otherId, peer] of room.entries()) {
-            if (otherId !== session.deviceId) {
-              sendJson(peer.ws, {
-                type: "device-joined",
-                channelCode: code,
-                device: newMemberInfo,
-              });
+            };
+            for (const [otherId, peer] of room.entries()) {
+              if (otherId !== session.deviceId) {
+                sendJson(peer.ws, {
+                  type: "device-joined",
+                  channelCode: code,
+                  device: newMemberInfo,
+                });
+              }
             }
           }
           break;
         }
-
-        // 2. Leave Channel
         case "leave": {
           removeSessionFromChannel(session);
           sendJson(ws, { type: "left" });
           break;
         }
-
-        // 3. Rename Device
         case "rename": {
           const newName = typeof msg.deviceName === "string" ? msg.deviceName.trim().slice(0, 50) : "";
           if (newName) {
             session.deviceName = newName;
             const code = session.channelCode;
-            if (code && channels.has(code)) {
-              const room = channels.get(code)!;
+            
+            const sync = firestoreSyncs.get(code);
+            if (sync) {
+              await sync.registerLocalDevice({
+                id: session.deviceId,
+                name: session.deviceName,
+                platform: session.platform,
+                joinedAt: session.joinedAt
+              });
+            } else if (code && localChannels.has(code)) {
+              const room = localChannels.get(code)!;
               for (const [otherId, peer] of room.entries()) {
                 if (otherId !== session.deviceId) {
                   sendJson(peer.ws, {
@@ -252,83 +367,18 @@ wss.on("connection", (ws: WebSocket, req) => {
           }
           break;
         }
-
-        // 4. WebRTC Signaling: Offer forwarding
-        case "offer": {
-          const { targetDeviceId, fromDeviceId, sdp } = msg;
-          const code = session.channelCode;
-          if (!code || !channels.has(code)) {
-            sendJson(ws, { type: "error", message: "Not in a channel." });
-            return;
-          }
-
-          const room = channels.get(code)!;
-          const targetSession = room.get(targetDeviceId);
-          if (targetSession) {
-            sendJson(targetSession.ws, {
-              type: "offer",
-              channelCode: code,
-              fromDeviceId: fromDeviceId || session.deviceId,
-              targetDeviceId,
-              sdp,
-            });
-          }
-          break;
-        }
-
-        // 5. WebRTC Signaling: Answer forwarding
-        case "answer": {
-          const { targetDeviceId, fromDeviceId, sdp } = msg;
-          const code = session.channelCode;
-          if (!code || !channels.has(code)) {
-            sendJson(ws, { type: "error", message: "Not in a channel." });
-            return;
-          }
-
-          const room = channels.get(code)!;
-          const targetSession = room.get(targetDeviceId);
-          if (targetSession) {
-            sendJson(targetSession.ws, {
-              type: "answer",
-              channelCode: code,
-              fromDeviceId: fromDeviceId || session.deviceId,
-              targetDeviceId,
-              sdp,
-            });
-          }
-          break;
-        }
-
-        // 6. WebRTC Signaling: ICE Candidate forwarding
+        case "offer":
+        case "answer":
         case "ice-candidate": {
-          const { targetDeviceId, fromDeviceId, candidate } = msg;
-          const code = session.channelCode;
-          if (!code || !channels.has(code)) return;
-
-          const room = channels.get(code)!;
-          const targetSession = room.get(targetDeviceId);
-          if (targetSession) {
-            sendJson(targetSession.ws, {
-              type: "ice-candidate",
-              channelCode: code,
-              fromDeviceId: fromDeviceId || session.deviceId,
-              targetDeviceId,
-              candidate,
-            });
-          }
+          await forwardSignalingMessage(session, msg, type);
           break;
         }
-
-        // 7. Ping / Heartbeat
         case "ping": {
           session.isAlive = true;
           session.lastPing = Date.now();
           sendJson(ws, { type: "pong", timestamp: Date.now() });
           break;
         }
-
-        default:
-          console.warn(`[Warn] Unknown message type "${type}" from ${session.deviceId}`);
       }
     } catch (err) {
       console.error("[Error] Failed to process incoming message:", err);
@@ -346,7 +396,6 @@ wss.on("connection", (ws: WebSocket, req) => {
   });
 });
 
-// Periodic Heartbeat check: detect and clean up dead sockets every 15 seconds
 const heartbeatInterval = setInterval(() => {
   for (const [ws, session] of socketSessions.entries()) {
     if (!session.isAlive) {
@@ -356,7 +405,6 @@ const heartbeatInterval = setInterval(() => {
       ws.terminate();
       continue;
     }
-
     session.isAlive = false;
     ws.ping();
   }
@@ -370,6 +418,5 @@ server.listen(PORT, HOST, () => {
   console.log(`=======================================================`);
   console.log(`⚡ SlideDrop WebSocket Signaling Server running`);
   console.log(`📡 Listening on: ws://${HOST}:${PORT}`);
-  console.log(`🌐 Health check: http://${HOST}:${PORT}/health`);
   console.log(`=======================================================`);
 });

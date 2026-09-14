@@ -46,13 +46,35 @@ export class TransferManager {
     return this.webrtc.isConnectedToPeer(recipientId);
   }
 
+  // Waits for P2P connection to establish with a timeout
+  public async waitForP2P(recipientId: string, timeoutMs: number = 8000): Promise<boolean> {
+    if (this.canUseP2P(recipientId)) return true;
+    if (!this.webrtc) return false;
+
+    // Check if we are currently connecting to any relevant peers
+    const isConnecting = recipientId === "all" 
+      ? Array.from(this.webrtc["peerConnections"]?.keys() || []).some(id => this.webrtc!.isConnectingToPeer(id))
+      : this.webrtc.isConnectingToPeer(recipientId);
+
+    if (!isConnecting) return false;
+
+    // Poll for connection state
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.canUseP2P(recipientId)) return true;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    
+    return false; // Timeout
+  }
+
   // Send Text Note
   public async sendText(
     recipientId: string,
     recipientName: string,
     text: string
   ): Promise<TransferResult> {
-    const isP2P = this.canUseP2P(recipientId);
+    const isP2P = await this.waitForP2P(recipientId, 8000);
     let transferId = "txt_" + Math.random().toString(36).substring(2, 10);
 
     // Architecture A: Direct local P2P WebRTC DataChannel
@@ -137,7 +159,8 @@ export class TransferManager {
     file: File,
     onProgress?: (percent: number) => void
   ): Promise<TransferResult> {
-    const isP2P = this.canUseP2P(recipientId);
+    const isP2P = await this.waitForP2P(recipientId, 8000);
+    let transferId = "file_" + Math.random().toString(36).substring(2, 10);
 
     // Architecture A: Direct local P2P WebRTC DataChannel (16KB chunking with backpressure)
     if (isP2P && this.webrtc) {
@@ -178,7 +201,7 @@ export class TransferManager {
 
     // Architecture B: Remote Firebase Storage & Firestore transfer (24h expiry)
     let downloadUrl = "";
-    let transferId = "tr_" + Math.random().toString(36).substring(2, 10);
+    transferId = "tr_" + Math.random().toString(36).substring(2, 10);
     const cleanName = file.name.replace(/[^a-zA-Z0-9._ -]/g, "_");
     const filePath = `channels/${this.channelCode}/transfers/${transferId}/${cleanName}`;
 

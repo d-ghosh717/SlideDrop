@@ -26,12 +26,24 @@ export type WebRTCCallbacks = {
   onTransferAcknowledged?: (transferId: string) => void;
 };
 
-const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
+// Read from env to allow adding TURN servers in production, fallback to Google STUN
+const parseIceServers = (): RTCIceServer[] => {
+  if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_ICE_SERVERS) {
+    try {
+      return JSON.parse(process.env.NEXT_PUBLIC_ICE_SERVERS);
+    } catch (e) {
+      console.warn("Failed to parse NEXT_PUBLIC_ICE_SERVERS, falling back to defaults.");
+    }
+  }
+  return [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
-  ],
+  ];
+};
+
+const ICE_SERVERS: RTCConfiguration = {
+  iceServers: parseIceServers(),
 };
 
 const CHUNK_SIZE = 16 * 1024; // 16 KB chunks for reliable WebRTC transmission
@@ -66,6 +78,12 @@ export class WebRTCManager {
   public isConnectedToPeer(peerDeviceId: string): boolean {
     const dc = this.dataChannels.get(peerDeviceId);
     return dc !== undefined && dc.readyState === "open";
+  }
+
+  public isConnectingToPeer(peerDeviceId: string): boolean {
+    const pc = this.peerConnections.get(peerDeviceId);
+    if (!pc) return false;
+    return pc.connectionState === "new" || pc.connectionState === "connecting";
   }
 
   public getConnectedPeerCount(): number {

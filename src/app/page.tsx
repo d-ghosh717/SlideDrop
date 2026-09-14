@@ -841,27 +841,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Localhost Warning — Critical for cross-device debugging */}
-        {typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") && (
-          <div className={styles.localhostWarning}>
-            <strong>⚠️ Cross-device discovery will NOT work via localhost</strong>
-            <span>
-              You are accessing this app via <code>{window.location.hostname}:{window.location.port}</code>.
-              Each physical device&apos;s <code>localhost</code> refers to itself.
-              Both devices must connect to the <strong>same signaling server</strong>.
-            </span>
-            <span>
-              <strong>To fix:</strong> Access this app via your LAN IP on <strong>all devices</strong>.
-              Run <code>ifconfig</code> (macOS) or <code>ipconfig</code> (Windows) to find your host machine&apos;s LAN IP.
-            </span>
-            <div className={styles.localhostWarningCode}>
-              Example: http://192.168.x.x:3000 (instead of localhost:3000)
-            </div>
-            <span style={{ fontSize: "12px", color: "#92400e" }}>
-              Signaling URL being used: <code>{signalingUrl || getDefaultSignalingUrl()}</code>
-            </span>
-          </div>
-        )}
+        {/* Notice & Error Banner */}
 
         {/* Connection Info Bar — Always visible */}
         <div className={styles.connectionInfoBar}>
@@ -1354,13 +1334,6 @@ export default function Home() {
                     })
                   )}
                 </div>
-
-                {typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") && (
-                  <div className={styles.localhostWarning} style={{ marginTop: "8px" }}>
-                    <strong>⚠️ Hostname is &quot;{window.location.hostname}&quot;</strong>
-                    <span>Cross-device discovery requires all devices to use the same LAN IP, not localhost.</span>
-                  </div>
-                )}
               </div>
             </div>
           </div>

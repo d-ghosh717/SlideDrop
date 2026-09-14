@@ -24,13 +24,8 @@ export function getDefaultSignalingUrl(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_SIGNALING_URL) {
     return process.env.NEXT_PUBLIC_SIGNALING_URL;
   }
-  if (typeof window !== "undefined") {
-    const isHttps = window.location.protocol === "https:";
-    const host = window.location.hostname || "localhost";
-    const protocol = isHttps ? "wss:" : "ws:";
-    return `${protocol}//${host}:3001`;
-  }
-  return "ws://localhost:3001";
+  console.warn("NEXT_PUBLIC_SIGNALING_URL is not set. WebSocket signaling will fail.");
+  return "";
 }
 
 export class SignalingClient {
