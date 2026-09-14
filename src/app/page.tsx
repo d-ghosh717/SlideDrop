@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { auth, db, storage } from "@/lib/firebase";
 import { SignalingClient, getDefaultSignalingUrl } from "@/lib/signaling-client";
+import type { SignalingEvent } from "@/lib/signaling-client";
 import { WebRTCManager } from "@/lib/webrtc";
 import { TransferManager } from "@/lib/transfer-manager";
 import type { Device, Transfer } from "@/lib/types";
@@ -205,6 +206,8 @@ export default function Home() {
   const [transferStatusText, setTransferStatusText] = useState<string>("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; type: "success" | "warning" | "info" } | null>(null);
+  const [signalingEvents, setSignalingEvents] = useState<SignalingEvent[]>([]);
+  const [signalingUrl, setSignalingUrl] = useState<string>(() => (typeof window !== "undefined" ? getDefaultSignalingUrl() : ""));
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const signalingRef = useRef<SignalingClient | null>(null);
@@ -336,6 +339,7 @@ export default function Home() {
     const signaling = new SignalingClient({
       onConnected: () => {
         setIsWsConnected(true);
+        setSignalingUrl(signaling.getUrl());
       },
       onDisconnected: () => {
         setIsWsConnected(false);
@@ -392,6 +396,12 @@ export default function Home() {
       },
       onError: (msg) => {
         setErrorMessage(msg);
+      },
+      onEvent: (event) => {
+        setSignalingEvents((prev) => {
+          const next = [event, ...prev];
+          return next.length > 100 ? next.slice(0, 100) : next;
+        });
       },
     });
 
@@ -831,6 +841,57 @@ export default function Home() {
           </div>
         )}
 
+        {/* Localhost Warning — Critical for cross-device debugging */}
+        {typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") && (
+          <div className={styles.localhostWarning}>
+            <strong>⚠️ Cross-device discovery will NOT work via localhost</strong>
+            <span>
+              You are accessing this app via <code>{window.location.hostname}:{window.location.port}</code>.
+              Each physical device&apos;s <code>localhost</code> refers to itself.
+              Both devices must connect to the <strong>same signaling server</strong>.
+            </span>
+            <span>
+              <strong>To fix:</strong> Access this app via your LAN IP on <strong>all devices</strong>.
+              Run <code>ifconfig</code> (macOS) or <code>ipconfig</code> (Windows) to find your host machine&apos;s LAN IP.
+            </span>
+            <div className={styles.localhostWarningCode}>
+              Example: http://192.168.x.x:3000 (instead of localhost:3000)
+            </div>
+            <span style={{ fontSize: "12px", color: "#92400e" }}>
+              Signaling URL being used: <code>{signalingUrl || getDefaultSignalingUrl()}</code>
+            </span>
+          </div>
+        )}
+
+        {/* Connection Info Bar — Always visible */}
+        <div className={styles.connectionInfoBar}>
+          <div className={styles.connectionInfoItem}>
+            <span className={styles.connectionInfoLabel}>Signaling:</span>
+            <span className={`${styles.connectionInfoDot} ${isWsConnected ? styles.connectionInfoDotOk : styles.connectionInfoDotFail}`} />
+            <span className={styles.connectionInfoValue}>
+              {signalingUrl || getDefaultSignalingUrl()}
+            </span>
+          </div>
+          <div className={styles.connectionInfoItem}>
+            <span className={styles.connectionInfoLabel}>WS:</span>
+            <span className={styles.connectionInfoValue}>
+              {isWsConnected ? "Connected" : "Disconnected"}
+            </span>
+          </div>
+          <div className={styles.connectionInfoItem}>
+            <span className={styles.connectionInfoLabel}>Channel:</span>
+            <span className={styles.connectionInfoValue}>{channelCode}</span>
+          </div>
+          <div className={styles.connectionInfoItem}>
+            <span className={styles.connectionInfoLabel}>Peers:</span>
+            <span className={styles.connectionInfoValue}>{otherDevices.length} discovered, {connectedPeerIds.length} P2P</span>
+          </div>
+          <div className={styles.connectionInfoItem}>
+            <span className={styles.connectionInfoLabel}>ID:</span>
+            <span className={styles.connectionInfoValue}>{deviceId.slice(0, 12)}</span>
+          </div>
+        </div>
+
         {/* Connected Devices & Channel Toolbar */}
         <section className={styles.deviceCard}>
           <div className={styles.deviceCardHeader}>
@@ -1216,7 +1277,7 @@ export default function Home() {
         {/* Connection Diagnostics Modal */}
         {showDiagnostics && (
           <div className={styles.modalOverlay} onClick={() => setShowDiagnostics(false)}>
-            <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalCard} onClick={(e) => e.stopPropagation()} style={{ width: "min(600px, 95vw)" }}>
               <div className={styles.modalHeader}>
                 <h3 className={styles.modalTitle}>⚡ SlideDrop Diagnostics</h3>
                 <button className={styles.modalCloseBtn} onClick={() => setShowDiagnostics(false)}>
@@ -1225,34 +1286,81 @@ export default function Home() {
               </div>
 
               <div className={styles.diagnosticsContent}>
+                <p className={styles.diagSectionTitle}>Connection</p>
                 <div className={styles.diagRow}>
-                  <span>Signaling Server:</span>
-                  <strong>{getDefaultSignalingUrl()} ({isWsConnected ? "🟢 Connected" : "🔴 Disconnected"})</strong>
+                  <span>Signaling URL:</span>
+                  <strong>{signalingUrl || getDefaultSignalingUrl()}</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>WebSocket Status:</span>
+                  <strong>{isWsConnected ? "🟢 Connected" : "🔴 Disconnected"}</strong>
                 </div>
                 <div className={styles.diagRow}>
                   <span>Active Channel:</span>
                   <strong>{channelCode}</strong>
                 </div>
+
+                <p className={styles.diagSectionTitle}>Identity</p>
                 <div className={styles.diagRow}>
-                  <span>Local Device:</span>
-                  <strong>{deviceName} (<code>{deviceId.slice(0, 8)}</code>)</strong>
+                  <span>Device ID:</span>
+                  <strong><code>{deviceId}</code></strong>
                 </div>
                 <div className={styles.diagRow}>
-                  <span>Auth Status:</span>
-                  <strong>{currentUser ? `Firebase Authenticated (${currentUser.uid.slice(0, 8)})` : "Anonymous"}</strong>
+                  <span>Device Name:</span>
+                  <strong>{deviceName}</strong>
                 </div>
                 <div className={styles.diagRow}>
-                  <span>Channel Members:</span>
-                  <strong>{allDevices.length} total ({otherDevices.length} remote)</strong>
+                  <span>Platform:</span>
+                  <strong>{platformInfo.type}</strong>
                 </div>
                 <div className={styles.diagRow}>
-                  <span>Direct WebRTC Peers:</span>
+                  <span>Firebase Auth:</span>
+                  <strong>{currentUser ? `Authenticated (${currentUser.uid.slice(0, 8)})` : "Anonymous"}</strong>
+                </div>
+
+                <p className={styles.diagSectionTitle}>Discovery</p>
+                <div className={styles.diagRow}>
+                  <span>Channel Members (total):</span>
+                  <strong>{allDevices.length}</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>Remote Devices:</span>
+                  <strong>{otherDevices.length} ({otherDevices.map(d => d.name).join(", ") || "none"})</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>WebRTC P2P Peers:</span>
                   <strong>{connectedPeerIds.length} connected</strong>
                 </div>
                 <div className={styles.diagRow}>
                   <span>Active Architecture:</span>
-                  <strong>{connectedPeerIds.length > 0 ? "⚡ Architecture A (Direct WebRTC P2P)" : "☁️ Architecture B (Cloud Relay)"}</strong>
+                  <strong>{connectedPeerIds.length > 0 ? "⚡ A (Direct WebRTC P2P)" : "☁️ B (Cloud Relay)"}</strong>
                 </div>
+
+                <p className={styles.diagSectionTitle}>Event Log ({signalingEvents.length})</p>
+                <div className={styles.eventLog}>
+                  {signalingEvents.length === 0 ? (
+                    <span style={{ color: "#64748b" }}>No events yet...</span>
+                  ) : (
+                    signalingEvents.map((evt, i) => {
+                      const time = new Date(evt.timestamp);
+                      const ts = `${time.getHours().toString().padStart(2, "0")}:${time.getMinutes().toString().padStart(2, "0")}:${time.getSeconds().toString().padStart(2, "0")}`;
+                      return (
+                        <div key={`evt-${i}`} className={styles.eventLogEntry}>
+                          <span className={styles.eventLogTime}>{ts}</span>
+                          <span className={styles.eventLogName}>{evt.event}</span>
+                          <span className={styles.eventLogDetail}>{evt.detail || ""}</span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") && (
+                  <div className={styles.localhostWarning} style={{ marginTop: "8px" }}>
+                    <strong>⚠️ Hostname is &quot;{window.location.hostname}&quot;</strong>
+                    <span>Cross-device discovery requires all devices to use the same LAN IP, not localhost.</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

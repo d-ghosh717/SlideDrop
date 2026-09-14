@@ -1,5 +1,11 @@
 import type { Device } from "./types";
 
+export interface SignalingEvent {
+  timestamp: number;
+  event: string;
+  detail?: string;
+}
+
 export interface SignalingCallbacks {
   onConnected?: () => void;
   onDisconnected?: () => void;
@@ -11,6 +17,7 @@ export interface SignalingCallbacks {
   onAnswer?: (data: { fromDeviceId: string; sdp: RTCSessionDescriptionInit }) => void;
   onIceCandidate?: (data: { fromDeviceId: string; candidate: RTCIceCandidateInit }) => void;
   onError?: (message: string) => void;
+  onEvent?: (event: SignalingEvent) => void;
 }
 
 export function getDefaultSignalingUrl(): string {
@@ -45,6 +52,16 @@ export class SignalingClient {
     this.url = customUrl || getDefaultSignalingUrl();
   }
 
+  public getUrl(): string {
+    return this.url;
+  }
+
+  private logEvent(event: string, detail?: string) {
+    const entry: SignalingEvent = { timestamp: Date.now(), event, detail };
+    console.log(`[Signaling] ${event}${detail ? ': ' + detail : ''}`);
+    this.callbacks.onEvent?.(entry);
+  }
+
   public connect(channelCode: string, deviceId: string, deviceName: string, platform: string = "browser") {
     this.isExplicitlyClosed = false;
     this.currentChannel = channelCode.trim().toUpperCase();
@@ -61,9 +78,11 @@ export class SignalingClient {
 
       this.ws.onopen = () => {
         this.isConnected = true;
+        this.logEvent('ws-connected', `Connected to ${this.url}`);
         this.callbacks.onConnected?.();
 
         // Immediately join the requested channel
+        this.logEvent('join-sending', `channel=${this.currentChannel} device=${this.currentDeviceId} name=${this.currentDeviceName}`);
         this.send({
           type: "join",
           channelCode: this.currentChannel,
@@ -88,6 +107,7 @@ export class SignalingClient {
       this.ws.onclose = () => {
         this.isConnected = false;
         this.stopHeartbeat();
+        this.logEvent('ws-disconnected', `Disconnected from ${this.url}`);
         this.callbacks.onDisconnected?.();
 
         if (!this.isExplicitlyClosed) {
@@ -95,8 +115,8 @@ export class SignalingClient {
         }
       };
 
-      this.ws.onerror = (err) => {
-        console.warn("[SignalingClient] WebSocket error on", this.url, err);
+      this.ws.onerror = () => {
+        this.logEvent('ws-error', `WebSocket error on ${this.url}`);
       };
     } catch (err) {
       console.warn("[SignalingClient] Connect attempt error:", err);
@@ -232,6 +252,7 @@ export class SignalingClient {
     switch (msg.type) {
       case "joined": {
         const rawDevices = msg.devices || [];
+        this.logEvent('joined', `channel=${msg.channelCode} peers=${rawDevices.length} (${rawDevices.map(d => d.name).join(', ') || 'none'})`);
         const formattedDevices: Device[] = rawDevices.map((d) => ({
           id: d.id,
           userId: d.id,
@@ -256,6 +277,7 @@ export class SignalingClient {
       case "device-joined": {
         if (msg.device) {
           const d = msg.device;
+          this.logEvent('device-joined', `${d.name} (${d.id}) joined channel`);
           const formatted: Device = {
             id: d.id,
             userId: d.id,
@@ -295,6 +317,7 @@ export class SignalingClient {
 
       case "device-left": {
         if (msg.deviceId) {
+          this.logEvent('device-left', `Device ${msg.deviceId} left channel`);
           this.callbacks.onDeviceLeft?.(msg.deviceId);
         }
         break;
@@ -302,6 +325,7 @@ export class SignalingClient {
 
       case "offer": {
         if (msg.fromDeviceId && msg.sdp) {
+          this.logEvent('offer-received', `from ${msg.fromDeviceId}`);
           this.callbacks.onOffer?.({ fromDeviceId: msg.fromDeviceId, sdp: msg.sdp });
         }
         break;
@@ -309,6 +333,7 @@ export class SignalingClient {
 
       case "answer": {
         if (msg.fromDeviceId && msg.sdp) {
+          this.logEvent('answer-received', `from ${msg.fromDeviceId}`);
           this.callbacks.onAnswer?.({ fromDeviceId: msg.fromDeviceId, sdp: msg.sdp });
         }
         break;
@@ -316,6 +341,7 @@ export class SignalingClient {
 
       case "ice-candidate": {
         if (msg.fromDeviceId && msg.candidate) {
+          this.logEvent('ice-candidate', `from ${msg.fromDeviceId}`);
           this.callbacks.onIceCandidate?.({ fromDeviceId: msg.fromDeviceId, candidate: msg.candidate });
         }
         break;
@@ -323,6 +349,7 @@ export class SignalingClient {
 
       case "error": {
         if (msg.message) {
+          this.logEvent('server-error', msg.message);
           this.callbacks.onError?.(msg.message);
         }
         break;
