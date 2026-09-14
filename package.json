@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 0.0.0.0",
+    "signaling": "npm --prefix signaling-server run dev",
     "dev:all": "concurrently -n \"next,signal\" -c \"cyan,green\" \"next dev -H 0.0.0.0\" \"npm --prefix signaling-server run dev\"",
     "server": "npm --prefix signaling-server run dev",
     "server:build": "npm --prefix signaling-server run build",
