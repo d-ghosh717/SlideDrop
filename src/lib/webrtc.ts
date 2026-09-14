@@ -1,21 +1,12 @@
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  Firestore,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  where,
-  Unsubscribe,
-} from "firebase/firestore";
+import { SignalingClient } from "./signaling-client";
 
-export type WebRTCMessage =
-  | { type: "text"; id: string; text: string; senderName: string; timestamp: number }
-  | { type: "file-meta"; transferId: string; filename: string; mimeType: string; size: number; totalChunks: number; senderName: string }
+export type WebRTCDataMessage =
+  | { type: "text"; transferId: string; text: string; senderName: string; timestamp: number }
+  | { type: "text-ack"; transferId: string }
+  | { type: "file-start"; transferId: string; filename: string; mimeType: string; size: number; totalChunks: number; senderName: string }
   | { type: "file-chunk"; transferId: string; chunkIndex: number; data: string }
-  | { type: "file-complete"; transferId: string };
+  | { type: "file-end"; transferId: string }
+  | { type: "file-ack"; transferId: string };
 
 export type WebRTCCallbacks = {
   onPeerConnected?: (peerDeviceId: string) => void;
@@ -32,6 +23,7 @@ export type WebRTCCallbacks = {
     senderName: string;
     timestamp: number;
   }) => void;
+  onTransferAcknowledged?: (transferId: string) => void;
 };
 
 const ICE_SERVERS: RTCConfiguration = {
@@ -46,10 +38,9 @@ const CHUNK_SIZE = 16 * 1024; // 16 KB chunks for reliable WebRTC transmission
 const MAX_BUFFERED_AMOUNT = 64 * 1024; // 64 KB threshold for backpressure
 
 export class WebRTCManager {
-  private db: Firestore | null;
+  private signaling: SignalingClient;
   private localDeviceId: string;
-  private localUid: string;
-  private channelCode: string;
+  private localDeviceName: string;
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private dataChannels: Map<string, RTCDataChannel> = new Map();
   private pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
@@ -59,113 +50,17 @@ export class WebRTCManager {
     receivedCount: number;
   }> = new Map();
   private callbacks: WebRTCCallbacks;
-  private unsubscribeSignals: Unsubscribe | null = null;
-  private processedSignalIds: Set<string> = new Set();
-  private broadcastChannel: BroadcastChannel | null = null;
 
   constructor(
-    db: Firestore | null,
+    signaling: SignalingClient,
     localDeviceId: string,
-    localUid: string,
-    channelCode: string,
+    localDeviceName: string,
     callbacks: WebRTCCallbacks
   ) {
-    this.db = db;
+    this.signaling = signaling;
     this.localDeviceId = localDeviceId;
-    this.localUid = localUid;
-    this.channelCode = channelCode.toUpperCase();
+    this.localDeviceName = localDeviceName;
     this.callbacks = callbacks;
-  }
-
-  public startSignaling() {
-    if (this.unsubscribeSignals) return;
-
-    // 1. BroadcastChannel for fast local same-origin tab signaling
-    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
-      try {
-        this.broadcastChannel = new BroadcastChannel(`slidedrop_signals_${this.channelCode}`);
-        this.broadcastChannel.onmessage = async (event) => {
-          const { senderDeviceId, recipientDeviceId, type, data } = event.data || {};
-          if (senderDeviceId === this.localDeviceId) return;
-          if (recipientDeviceId && recipientDeviceId !== "all" && recipientDeviceId !== this.localDeviceId) return;
-
-          const payload = typeof data === "string" ? JSON.parse(data) : data;
-          if (type === "offer") {
-            await this.handleOffer(senderDeviceId, payload);
-          } else if (type === "answer") {
-            await this.handleAnswer(senderDeviceId, payload);
-          } else if (type === "candidate") {
-            await this.handleCandidate(senderDeviceId, payload);
-          }
-        };
-      } catch (err) {
-        console.warn("BroadcastChannel error:", err);
-      }
-    }
-
-    // 2. Cloud Firestore signaling for cross-device / cross-machine signaling
-    if (this.db) {
-      try {
-        const signalsRef = collection(this.db, "channels", this.channelCode, "signals");
-        const q = query(signalsRef, where("recipientDeviceId", "==", this.localDeviceId));
-
-        this.unsubscribeSignals = onSnapshot(
-          q,
-          (snapshot) => {
-            snapshot.docChanges().forEach(async (change) => {
-              if (change.type === "added") {
-                const docId = change.doc.id;
-                if (this.processedSignalIds.has(docId)) return;
-                this.processedSignalIds.add(docId);
-
-                const data = change.doc.data();
-                const senderId = data.senderDeviceId as string;
-                const type = data.type as "offer" | "answer" | "candidate";
-                const payload = typeof data.data === "string" ? JSON.parse(data.data) : data.data;
-
-                if (type === "offer") {
-                  await this.handleOffer(senderId, payload);
-                } else if (type === "answer") {
-                  await this.handleAnswer(senderId, payload);
-                } else if (type === "candidate") {
-                  await this.handleCandidate(senderId, payload);
-                }
-
-                if (this.db) {
-                  deleteDoc(doc(this.db, "channels", this.channelCode, "signals", docId)).catch(() => {});
-                }
-              }
-            });
-          },
-          (error) => {
-            console.warn("Firestore signaling listener notice:", error.message);
-          }
-        );
-      } catch (err) {
-        console.warn("Could not start Firestore signaling listener:", err);
-      }
-    }
-  }
-
-  public stop() {
-    if (this.broadcastChannel) {
-      this.broadcastChannel.close();
-      this.broadcastChannel = null;
-    }
-    if (this.unsubscribeSignals) {
-      this.unsubscribeSignals();
-      this.unsubscribeSignals = null;
-    }
-    for (const [peerId, pc] of this.peerConnections.entries()) {
-      pc.close();
-      this.callbacks.onPeerDisconnected?.(peerId);
-      this.callbacks.onPeerStateChange?.(peerId, "disconnected");
-    }
-    this.peerConnections.clear();
-    this.dataChannels.clear();
-    this.pendingCandidates.clear();
-    this.incomingFiles.clear();
-    this.processedSignalIds.clear();
   }
 
   public isConnectedToPeer(peerDeviceId: string): boolean {
@@ -189,7 +84,6 @@ export class WebRTCManager {
     return list;
   }
 
-  // Handle discovered peers in channel: determine who is offerer
   public syncPeers(remoteDeviceIds: string[]) {
     for (const remoteId of remoteDeviceIds) {
       if (remoteId === this.localDeviceId) continue;
@@ -198,17 +92,56 @@ export class WebRTCManager {
         // Deterministic role: smaller lexicographical ID is the offerer
         const isOfferer = this.localDeviceId < remoteId;
         if (isOfferer) {
+          console.log(`[WebRTC] Initiating offer to peer ${remoteId}`);
           this.initiateOffer(remoteId);
         }
       }
     }
 
-    // Clean up peers that left
+    // Close and remove peers that left
     for (const peerId of this.peerConnections.keys()) {
       if (!remoteDeviceIds.includes(peerId)) {
         this.closePeer(peerId);
       }
     }
+  }
+
+  public handleRemoteOffer(fromDeviceId: string, sdp: RTCSessionDescriptionInit) {
+    this.handleOffer(fromDeviceId, sdp);
+  }
+
+  public handleRemoteAnswer(fromDeviceId: string, sdp: RTCSessionDescriptionInit) {
+    this.handleAnswer(fromDeviceId, sdp);
+  }
+
+  public handleRemoteIceCandidate(fromDeviceId: string, candidate: RTCIceCandidateInit) {
+    this.handleCandidate(fromDeviceId, candidate);
+  }
+
+  public closePeer(peerDeviceId: string) {
+    const pc = this.peerConnections.get(peerDeviceId);
+    if (pc) {
+      pc.close();
+      this.peerConnections.delete(peerDeviceId);
+    }
+    const dc = this.dataChannels.get(peerDeviceId);
+    if (dc) {
+      dc.close();
+      this.dataChannels.delete(peerDeviceId);
+    }
+    this.pendingCandidates.delete(peerDeviceId);
+    this.callbacks.onPeerDisconnected?.(peerDeviceId);
+    this.callbacks.onPeerStateChange?.(peerDeviceId, "disconnected");
+  }
+
+  public closeAllPeers() {
+    for (const peerId of Array.from(this.peerConnections.keys())) {
+      this.closePeer(peerId);
+    }
+    this.peerConnections.clear();
+    this.dataChannels.clear();
+    this.pendingCandidates.clear();
+    this.incomingFiles.clear();
   }
 
   private getOrCreatePeerConnection(peerDeviceId: string): RTCPeerConnection {
@@ -222,11 +155,12 @@ export class WebRTCManager {
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        this.sendSignal(peerDeviceId, "candidate", event.candidate.toJSON());
+        this.signaling.sendIceCandidate(peerDeviceId, event.candidate.toJSON());
       }
     };
 
     pc.onconnectionstatechange = () => {
+      console.log(`[WebRTC] Peer ${peerDeviceId} connectionState: ${pc.connectionState}`);
       if (pc.connectionState === "connected") {
         this.callbacks.onPeerStateChange?.(peerDeviceId, "connected");
       } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed") {
@@ -236,6 +170,7 @@ export class WebRTCManager {
     };
 
     pc.ondatachannel = (event) => {
+      console.log(`[WebRTC] Received DataChannel from ${peerDeviceId}`);
       this.setupDataChannel(peerDeviceId, event.channel);
     };
 
@@ -247,26 +182,28 @@ export class WebRTCManager {
     channel.binaryType = "arraybuffer";
 
     channel.onopen = () => {
+      console.log(`[WebRTC] DataChannel OPEN with ${peerDeviceId}`);
       this.callbacks.onPeerConnected?.(peerDeviceId);
       this.callbacks.onPeerStateChange?.(peerDeviceId, "connected");
     };
 
     channel.onclose = () => {
+      console.log(`[WebRTC] DataChannel CLOSED with ${peerDeviceId}`);
       this.callbacks.onPeerDisconnected?.(peerDeviceId);
       this.callbacks.onPeerStateChange?.(peerDeviceId, "disconnected");
       this.dataChannels.delete(peerDeviceId);
     };
 
     channel.onerror = (err) => {
-      console.warn(`DataChannel error with ${peerDeviceId}`, err);
+      console.warn(`[WebRTC] DataChannel error with ${peerDeviceId}`, err);
     };
 
     channel.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data) as WebRTCMessage;
+        const msg = JSON.parse(event.data) as WebRTCDataMessage;
         this.handleIncomingMessage(peerDeviceId, msg);
       } catch (err) {
-        console.warn("Could not parse incoming WebRTC message", err);
+        console.warn("[WebRTC] Could not parse incoming DataChannel message:", err);
       }
     };
   }
@@ -279,9 +216,9 @@ export class WebRTCManager {
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await this.sendSignal(peerDeviceId, "offer", offer);
+      this.signaling.sendOffer(peerDeviceId, offer);
     } catch (err) {
-      console.warn(`Error creating offer for ${peerDeviceId}:`, err);
+      console.warn(`[WebRTC] Error creating offer for ${peerDeviceId}:`, err);
     }
   }
 
@@ -293,9 +230,9 @@ export class WebRTCManager {
 
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      await this.sendSignal(peerDeviceId, "answer", answer);
+      this.signaling.sendAnswer(peerDeviceId, answer);
     } catch (err) {
-      console.warn(`Error handling offer from ${peerDeviceId}:`, err);
+      console.warn(`[WebRTC] Error handling offer from ${peerDeviceId}:`, err);
     }
   }
 
@@ -307,7 +244,7 @@ export class WebRTCManager {
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
       this.drainPendingCandidates(peerDeviceId);
     } catch (err) {
-      console.warn(`Error handling answer from ${peerDeviceId}:`, err);
+      console.warn(`[WebRTC] Error handling answer from ${peerDeviceId}:`, err);
     }
   }
 
@@ -317,7 +254,7 @@ export class WebRTCManager {
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
-        console.warn(`Error adding ICE candidate from ${peerDeviceId}:`, err);
+        console.warn(`[WebRTC] Error adding ICE candidate from ${peerDeviceId}:`, err);
       }
     } else {
       if (!this.pendingCandidates.has(peerDeviceId)) {
@@ -335,69 +272,19 @@ export class WebRTCManager {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(cand));
         } catch (err) {
-          console.warn("Error adding drained candidate:", err);
+          console.warn("[WebRTC] Error adding drained candidate:", err);
         }
       }
       this.pendingCandidates.delete(peerDeviceId);
     }
   }
 
-  private closePeer(peerDeviceId: string) {
-    const pc = this.peerConnections.get(peerDeviceId);
-    if (pc) {
-      pc.close();
-      this.peerConnections.delete(peerDeviceId);
-    }
-    const dc = this.dataChannels.get(peerDeviceId);
-    if (dc) {
-      dc.close();
-      this.dataChannels.delete(peerDeviceId);
-    }
-    this.pendingCandidates.delete(peerDeviceId);
-    this.callbacks.onPeerDisconnected?.(peerDeviceId);
-  }
-
-  private async sendSignal(
-    recipientDeviceId: string,
-    type: "offer" | "answer" | "candidate",
-    data: RTCSessionDescriptionInit | RTCIceCandidateInit
-  ) {
-    // 1. BroadcastChannel (local tabs)
-    if (this.broadcastChannel) {
-      try {
-        this.broadcastChannel.postMessage({
-          senderDeviceId: this.localDeviceId,
-          recipientDeviceId,
-          type,
-          data,
-        });
-      } catch (err) {
-        console.warn("BroadcastChannel postMessage error:", err);
-      }
-    }
-
-    // 2. Cloud Firestore (remote/cross-device)
-    if (this.db) {
-      try {
-        await addDoc(collection(this.db, "channels", this.channelCode, "signals"), {
-          senderDeviceId: this.localDeviceId,
-          recipientDeviceId,
-          senderUid: this.localUid,
-          type,
-          data: JSON.stringify(data),
-          createdAt: serverTimestamp(),
-        });
-      } catch (err) {
-        console.warn("Firestore signal send notice:", err);
-      }
-    }
-  }
-
   // Send Text Note over WebRTC DataChannel
   public sendText(text: string, senderName: string, targetPeerId?: string): boolean {
-    const msg: WebRTCMessage = {
+    const transferId = "txt_" + Math.random().toString(36).substring(2, 10);
+    const msg: WebRTCDataMessage = {
       type: "text",
-      id: "txt_" + Math.random().toString(36).substring(2, 10),
+      transferId,
       text,
       senderName,
       timestamp: Date.now(),
@@ -415,17 +302,17 @@ export class WebRTCManager {
     return sent;
   }
 
-  // Send File with Chunking & Backpressure over WebRTC DataChannel
+  // Send File with Chunking, Backpressure & Confirmation over WebRTC DataChannel
   public async sendFile(
     file: File,
     senderName: string,
     targetPeerId?: string,
     onProgress?: (percent: number) => void
   ): Promise<boolean> {
-    const openChannels: RTCDataChannel[] = [];
+    const openChannels: { peerId: string; dc: RTCDataChannel }[] = [];
     for (const [peerId, dc] of this.dataChannels.entries()) {
       if (targetPeerId && targetPeerId !== "all" && peerId !== targetPeerId) continue;
-      if (dc.readyState === "open") openChannels.push(dc);
+      if (dc.readyState === "open") openChannels.push({ peerId, dc });
     }
 
     if (openChannels.length === 0) return false;
@@ -435,9 +322,9 @@ export class WebRTCManager {
     const totalChunks = Math.ceil(totalBytes / CHUNK_SIZE);
     const transferId = "tr_" + Math.random().toString(36).substring(2, 10);
 
-    // 1. Send file metadata header
-    const metaMsg: WebRTCMessage = {
-      type: "file-meta",
+    // 1. Send file-start metadata header
+    const startMsg: WebRTCDataMessage = {
+      type: "file-start",
       transferId,
       filename: file.name,
       mimeType: file.type || "application/octet-stream",
@@ -445,8 +332,8 @@ export class WebRTCManager {
       totalChunks,
       senderName,
     };
-    const metaPayload = JSON.stringify(metaMsg);
-    for (const dc of openChannels) dc.send(metaPayload);
+    const startPayload = JSON.stringify(startMsg);
+    for (const { dc } of openChannels) dc.send(startPayload);
 
     const bufferToBase64 = (buf: ArrayBuffer): string => {
       let binary = "";
@@ -464,7 +351,7 @@ export class WebRTCManager {
       const end = Math.min(start + CHUNK_SIZE, totalBytes);
       const chunkData = bufferToBase64(arrayBuffer.slice(start, end));
 
-      const chunkMsg: WebRTCMessage = {
+      const chunkMsg: WebRTCDataMessage = {
         type: "file-chunk",
         transferId,
         chunkIndex: i,
@@ -472,7 +359,7 @@ export class WebRTCManager {
       };
       const chunkPayload = JSON.stringify(chunkMsg);
 
-      for (const dc of openChannels) {
+      for (const { dc } of openChannels) {
         if (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
           await new Promise<void>((resolve) => {
             const onLow = () => {
@@ -491,25 +378,33 @@ export class WebRTCManager {
       this.callbacks.onFileProgress?.(transferId, percent, "send");
     }
 
-    // 3. Send completion notice
-    const completeMsg: WebRTCMessage = { type: "file-complete", transferId };
-    const completePayload = JSON.stringify(completeMsg);
-    for (const dc of openChannels) dc.send(completePayload);
+    // 3. Send file-end notice
+    const endMsg: WebRTCDataMessage = { type: "file-end", transferId };
+    const endPayload = JSON.stringify(endMsg);
+    for (const { dc } of openChannels) dc.send(endPayload);
 
     return true;
   }
 
   // Handle incoming data packets
-  private handleIncomingMessage(peerDeviceId: string, msg: WebRTCMessage) {
+  private handleIncomingMessage(peerDeviceId: string, msg: WebRTCDataMessage) {
     if (msg.type === "text") {
       this.callbacks.onTextMessage?.({
-        id: msg.id,
+        id: msg.transferId,
         text: msg.text,
         senderName: msg.senderName,
         timestamp: msg.timestamp,
         peerDeviceId,
       });
-    } else if (msg.type === "file-meta") {
+
+      // Send text-ack back to sender
+      const dc = this.dataChannels.get(peerDeviceId);
+      if (dc && dc.readyState === "open") {
+        dc.send(JSON.stringify({ type: "text-ack", transferId: msg.transferId }));
+      }
+    } else if (msg.type === "text-ack" || msg.type === "file-ack") {
+      this.callbacks.onTransferAcknowledged?.(msg.transferId);
+    } else if (msg.type === "file-start") {
       this.incomingFiles.set(msg.transferId, {
         meta: msg,
         chunks: new Array(msg.totalChunks),
@@ -525,7 +420,7 @@ export class WebRTCManager {
 
       const percent = Math.round((incoming.receivedCount / incoming.meta.totalChunks) * 100);
       this.callbacks.onFileProgress?.(msg.transferId, percent, "receive");
-    } else if (msg.type === "file-complete") {
+    } else if (msg.type === "file-end") {
       const incoming = this.incomingFiles.get(msg.transferId);
       if (!incoming) return;
 
@@ -553,8 +448,14 @@ export class WebRTCManager {
           senderName: incoming.meta.senderName,
           timestamp: Date.now(),
         });
+
+        // Send file-ack back to sender
+        const dc = this.dataChannels.get(peerDeviceId);
+        if (dc && dc.readyState === "open") {
+          dc.send(JSON.stringify({ type: "file-ack", transferId: incoming.meta.transferId }));
+        }
       } catch (err) {
-        console.error("Error reassembling file Blob:", err);
+        console.error("[WebRTC] Error reassembling file Blob:", err);
       } finally {
         this.incomingFiles.delete(msg.transferId);
       }

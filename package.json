@@ -4,6 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:all": "concurrently -n \"next,signal\" -c \"cyan,green\" \"next dev -H 0.0.0.0\" \"npm --prefix signaling-server run dev\"",
+    "server": "npm --prefix signaling-server run dev",
+    "server:build": "npm --prefix signaling-server run build",
+    "server:start": "npm --prefix signaling-server run start",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -19,6 +23,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^10.0.5",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "typescript": "^5"

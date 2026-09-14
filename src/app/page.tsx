@@ -1,20 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore } from "react";
 import { onAuthStateChanged, signInAnonymously, User } from "firebase/auth";
 import {
   collection,
-  deleteDoc,
-  doc,
   onSnapshot,
   query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
   where,
   Unsubscribe,
 } from "firebase/firestore";
 import { auth, db, storage } from "@/lib/firebase";
+import { SignalingClient, getDefaultSignalingUrl } from "@/lib/signaling-client";
 import { WebRTCManager } from "@/lib/webrtc";
 import { TransferManager } from "@/lib/transfer-manager";
 import type { Device, Transfer } from "@/lib/types";
@@ -28,16 +24,15 @@ const STORAGE_CHANNEL_CODE = "slidedrop-channel-code";
 const STORAGE_TRANSFERS = "slidedrop-transfers-history";
 
 type AppConnectionStatus =
-  | "INITIALIZING"
-  | "AUTHENTICATING"
-  | "WAITING_FOR_DEVICE"
+  | "NOT_CONNECTED"
+  | "CONNECTING_TO_SERVER"
+  | "CHANNEL_JOINED"
   | "DEVICE_DISCOVERED"
   | "CONNECTING_PEER"
-  | "PEER_CONNECTED"
-  | "SECURE_RELAY"
+  | "P2P_CONNECTED"
   | "TRANSFERRING"
-  | "FIREBASE_ERROR"
-  | "DISCONNECTED";
+  | "OFFLINE"
+  | "ERROR";
 
 function getDevicePlatform(): { type: "desktop" | "mobile" | "tablet" | "browser"; defaultName: string; icon: string } {
   if (typeof navigator === "undefined") {
@@ -120,73 +115,88 @@ function formatTime(timestamp: unknown): string {
   return date.toLocaleDateString();
 }
 
+const subscribeNoop = () => () => {};
+function useIsMounted(): boolean {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false
+  );
+}
+
+function getInitialDeviceId(): string {
+  if (typeof window === "undefined") return "";
+  let id = localStorage.getItem(STORAGE_DEVICE_ID);
+  if (!id) {
+    id = generatePersistentId();
+    localStorage.setItem(STORAGE_DEVICE_ID, id);
+  }
+  return id;
+}
+
+function getInitialDeviceName(): string {
+  if (typeof window === "undefined") return "My Device";
+  let name = localStorage.getItem(STORAGE_DEVICE_NAME);
+  if (!name) {
+    name = getDevicePlatform().defaultName;
+    localStorage.setItem(STORAGE_DEVICE_NAME, name);
+  }
+  return name;
+}
+
+function getInitialChannelCode(): string {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.search);
+  const fromUrl = params.get("channel") || params.get("code") || params.get("join");
+  if (fromUrl) {
+    const norm = fromUrl.trim().toUpperCase();
+    localStorage.setItem(STORAGE_CHANNEL_CODE, norm);
+    return norm;
+  }
+  let stored = localStorage.getItem(STORAGE_CHANNEL_CODE);
+  if (!stored) {
+    stored = generateRandomCode();
+    localStorage.setItem(STORAGE_CHANNEL_CODE, stored);
+  }
+  return stored;
+}
+
+function getInitialTransfers(): Transfer[] {
+  if (typeof window === "undefined") return [];
+  const raw = localStorage.getItem(STORAGE_TRANSFERS);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function Home() {
-  // 1. Local Device Identity
-  const [deviceId] = useState<string>(() => {
-    if (typeof window === "undefined") return "server-id";
-    let stored = localStorage.getItem(STORAGE_DEVICE_ID);
-    if (!stored) {
-      stored = generatePersistentId();
-      localStorage.setItem(STORAGE_DEVICE_ID, stored);
-    }
-    return stored;
-  });
+  // 1. Hydration Mount Guard (Guarantees zero SSR mismatch)
+  const isMounted = useIsMounted();
 
-  const [deviceName, setDeviceName] = useState<string>(() => {
-    if (typeof window === "undefined") return "My Device";
-    let stored = localStorage.getItem(STORAGE_DEVICE_NAME);
-    if (!stored) {
-      stored = getDevicePlatform().defaultName;
-      localStorage.setItem(STORAGE_DEVICE_NAME, stored);
-    }
-    return stored;
-  });
-
-  // 2. Channel Code State
-  const [channelCode, setChannelCode] = useState<string>(() => {
-    if (typeof window === "undefined") return "YYXJ8C";
-    const params = new URLSearchParams(window.location.search);
-    const fromUrl = params.get("channel") || params.get("code") || params.get("join");
-    if (fromUrl) {
-      const normalized = fromUrl.trim().toUpperCase();
-      localStorage.setItem(STORAGE_CHANNEL_CODE, normalized);
-      return normalized;
-    }
-    let stored = localStorage.getItem(STORAGE_CHANNEL_CODE);
-    if (!stored) {
-      stored = generateRandomCode();
-      localStorage.setItem(STORAGE_CHANNEL_CODE, stored);
-    }
-    return stored;
-  });
-
+  // 2. Client-only Identity and Channel State (Lazily initialized)
+  const [deviceId] = useState<string>(getInitialDeviceId);
+  const [deviceName, setDeviceName] = useState<string>(getInitialDeviceName);
+  const [channelCode, setChannelCode] = useState<string>(getInitialChannelCode);
   const [channelInput, setChannelInput] = useState("");
   const [isEditingName, setIsEditingName] = useState(false);
-  const [nameInput, setNameInput] = useState(deviceName);
+  const [nameInput, setNameInput] = useState(() => getInitialDeviceName());
 
-  // 3. Remote Channel Members (Authoritative State from Network)
+  // 3. WebSocket Signaling & Peer Presence States
+  const [isWsConnected, setIsWsConnected] = useState(false);
   const [remoteMembers, setRemoteMembers] = useState<Map<string, Device>>(new Map());
   const [peerStates, setPeerStates] = useState<Map<string, "connecting" | "connected" | "disconnected">>(new Map());
 
-  // 4. Firebase Auth & Status
+  // 4. Firebase Auth State (For cloud fallback)
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
-  // 5. Transfers & Composer States
-  const [transfers, setTransfers] = useState<Transfer[]>(() => {
-    if (typeof window === "undefined") return [];
-    const raw = localStorage.getItem(STORAGE_TRANSFERS);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw) as Transfer[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
-
+  // 5. Transfer History & Composer States
+  const [transfers, setTransfers] = useState<Transfer[]>(getInitialTransfers);
   const [recipient, setRecipient] = useState<string>("all");
   const [textMessage, setTextMessage] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -197,6 +207,7 @@ export default function Home() {
   const [notice, setNotice] = useState<{ text: string; type: "success" | "warning" | "info" } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const signalingRef = useRef<SignalingClient | null>(null);
   const webrtcRef = useRef<WebRTCManager | null>(null);
   const transferManagerRef = useRef<TransferManager | null>(null);
 
@@ -205,28 +216,26 @@ export default function Home() {
     setTransfers((prev) => {
       if (prev.some((t) => t.id === transfer.id)) return prev;
       const next = [transfer, ...prev];
-      localStorage.setItem(STORAGE_TRANSFERS, JSON.stringify(next));
+      if (typeof window !== "undefined") {
+        localStorage.setItem(STORAGE_TRANSFERS, JSON.stringify(next));
+      }
       return next;
     });
   }, []);
 
-  // 1. Firebase Authentication Lifecycle
+  // Firebase Anonymous Auth (for Architecture B cloud fallback)
   useEffect(() => {
     if (!auth) return;
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setCurrentUser(user);
-        setAuthError(null);
       } else {
         try {
           const cred = await signInAnonymously(auth);
           setCurrentUser(cred.user);
-          setAuthError(null);
         } catch (err: unknown) {
-          const code = err && typeof err === "object" && "code" in err ? String(err.code) : "unknown";
-          setAuthError(code);
-          setErrorMessage(`Firebase Auth notice (${code}).`);
+          console.warn("[Firebase] Anonymous auth notice:", err);
         }
       }
     });
@@ -234,11 +243,16 @@ export default function Home() {
     return () => unsubscribe();
   }, []);
 
-  // 2. WebRTC Manager Lifecycle
+  // Initialize WebSocket Signaling Client & WebRTC Manager
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!isMounted || !deviceId || !channelCode) return;
 
-    const callbacks = {
+    const platform = getDevicePlatform();
+
+    // 1. Instantiate WebRTC Manager
+    let webrtc: WebRTCManager | null = null;
+
+    const webrtcCallbacks = {
       onPeerConnected: (peerId: string) => {
         setPeerStates((prev) => new Map(prev).set(peerId, "connected"));
         setNotice({ text: "🟢 Direct WebRTC P2P DataChannel established!", type: "success" });
@@ -313,14 +327,84 @@ export default function Home() {
         appendTransfer(transfer);
         setNotice({ text: `📁 Received "${fileTransfer.filename}" from ${fileTransfer.senderName}!`, type: "success" });
       },
+      onTransferAcknowledged: (transferId: string) => {
+        console.log(`[WebRTC] Transfer ${transferId} acknowledged by recipient.`);
+      },
     };
 
-    const mgr = new WebRTCManager(db, deviceId, currentUser?.uid || "anon-user", channelCode, callbacks);
-    mgr.startSignaling();
-    webrtcRef.current = mgr;
+    // 2. Instantiate Signaling Client
+    const signaling = new SignalingClient({
+      onConnected: () => {
+        setIsWsConnected(true);
+      },
+      onDisconnected: () => {
+        setIsWsConnected(false);
+      },
+      onJoined: (data) => {
+        console.log("[Signaling] Successfully joined channel", data.channelCode, "with devices:", data.devices);
+        const map = new Map<string, Device>();
+        for (const dev of data.devices) {
+          map.set(dev.id, dev);
+        }
+        setRemoteMembers(map);
+      },
+      onDeviceJoined: (device) => {
+        console.log("[Signaling] New device joined:", device.name, device.id);
+        setRemoteMembers((prev) => {
+          const next = new Map(prev);
+          next.set(device.id, device);
+          return next;
+        });
+        setNotice({ text: `🟢 ${device.name} joined the channel!`, type: "info" });
+      },
+      onDeviceUpdated: (device) => {
+        setRemoteMembers((prev) => {
+          const next = new Map(prev);
+          next.set(device.id, device);
+          return next;
+        });
+      },
+      onDeviceLeft: (leftDeviceId) => {
+        console.log("[Signaling] Device left:", leftDeviceId);
+        setRemoteMembers((prev) => {
+          const next = new Map(prev);
+          next.delete(leftDeviceId);
+          return next;
+        });
+        if (webrtc) {
+          webrtc.closePeer(leftDeviceId);
+        }
+      },
+      onOffer: (data) => {
+        if (webrtc) {
+          webrtc.handleRemoteOffer(data.fromDeviceId, data.sdp);
+        }
+      },
+      onAnswer: (data) => {
+        if (webrtc) {
+          webrtc.handleRemoteAnswer(data.fromDeviceId, data.sdp);
+        }
+      },
+      onIceCandidate: (data) => {
+        if (webrtc) {
+          webrtc.handleRemoteIceCandidate(data.fromDeviceId, data.candidate);
+        }
+      },
+      onError: (msg) => {
+        setErrorMessage(msg);
+      },
+    });
 
+    webrtc = new WebRTCManager(signaling, deviceId, deviceName, webrtcCallbacks);
+    signalingRef.current = signaling;
+    webrtcRef.current = webrtc;
+
+    // Connect to WebSocket signaling server
+    signaling.connect(channelCode, deviceId, deviceName, platform.type);
+
+    // Initialize TransferManager (Dual Architectures A & B)
     transferManagerRef.current = new TransferManager(
-      mgr,
+      webrtc,
       db,
       storage,
       deviceId,
@@ -330,187 +414,24 @@ export default function Home() {
     );
 
     return () => {
-      mgr.stop();
+      signaling.disconnect();
+      webrtc?.closeAllPeers();
+      signalingRef.current = null;
       webrtcRef.current = null;
       transferManagerRef.current = null;
     };
-  }, [currentUser, channelCode, deviceId, deviceName, appendTransfer]);
+  }, [isMounted, deviceId, deviceName, channelCode, currentUser, appendTransfer]);
 
-  // 3. Presence: Register Self and Discover Channel Members (Firestore + BroadcastChannel)
+  // Synchronize WebRTC Peer connections whenever remote members change
   useEffect(() => {
-    const platform = getDevicePlatform();
-    const selfDevice: Device = {
-      id: deviceId,
-      userId: currentUser?.uid || "anon-user",
-      accountId: channelCode,
-      name: deviceName,
-      type: platform.type,
-      pairingCode: channelCode,
-      online: true,
-      state: "ONLINE",
-      lastSeen: Date.now(),
-      createdAt: Date.now(),
-    };
+    if (!webrtcRef.current) return;
+    const remoteIds = Array.from(remoteMembers.keys()).filter((id) => id !== deviceId);
+    webrtcRef.current.syncPeers(remoteIds);
+  }, [remoteMembers, deviceId]);
 
-    // A. Local BroadcastChannel for instant same-browser presence
-    let localBroadcast: BroadcastChannel | null = null;
-    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
-      try {
-        localBroadcast = new BroadcastChannel(`slidedrop_presence_${channelCode}`);
-        localBroadcast.onmessage = (event) => {
-          const { type, device } = event.data || {};
-          if (type === "heartbeat" && device && device.id !== deviceId) {
-            setRemoteMembers((prev) => {
-              const next = new Map(prev);
-              next.set(device.id, {
-                ...device,
-                state: "ONLINE",
-                online: true,
-                lastSeen: Date.now(),
-              });
-              return next;
-            });
-          } else if (type === "leave" && device) {
-            setRemoteMembers((prev) => {
-              const next = new Map(prev);
-              next.delete(device.id);
-              return next;
-            });
-          }
-        };
-
-        localBroadcast.postMessage({ type: "heartbeat", device: selfDevice });
-      } catch (err) {
-        console.warn("Local broadcast error:", err);
-      }
-    }
-
-    // B. Cloud Firestore Presence
-    let unsubFirestore: Unsubscribe | null = null;
-    let heartbeatTimer: number | null = null;
-
-    if (db) {
-      const deviceDocRef = doc(db, "channels", channelCode, "devices", deviceId);
-
-      const sendHeartbeat = () => {
-        setDoc(
-          deviceDocRef,
-          {
-            deviceId,
-            deviceName,
-            platform: platform.type,
-            uid: currentUser?.uid || "anon-user",
-            lastSeen: serverTimestamp(),
-            online: true,
-          },
-          { merge: true }
-        ).catch((err) => {
-          console.warn("Firestore presence notice:", err.message);
-        });
-
-        if (localBroadcast) {
-          localBroadcast.postMessage({
-            type: "heartbeat",
-            device: selfDevice,
-          });
-        }
-      };
-
-      sendHeartbeat();
-      heartbeatTimer = window.setInterval(sendHeartbeat, 4000);
-
-      // Listen for remote channel members
-      try {
-        const devicesRef = collection(db, "channels", channelCode, "devices");
-        unsubFirestore = onSnapshot(
-          devicesRef,
-          (snapshot) => {
-            setRemoteMembers((prev) => {
-              const next = new Map(prev);
-
-              snapshot.forEach((docSnap) => {
-                const data = docSnap.data();
-                const dId = data.deviceId || docSnap.id;
-                if (dId === deviceId) return;
-
-                next.set(dId, {
-                  id: dId,
-                  userId: data.uid || "anon",
-                  accountId: channelCode,
-                  name: data.deviceName || "Device",
-                  type: data.platform || "browser",
-                  pairingCode: channelCode,
-                  online: data.online !== false,
-                  state: "ONLINE",
-                  lastSeen: data.lastSeen,
-                  createdAt: data.lastSeen,
-                });
-              });
-
-              return next;
-            });
-          },
-          (error) => {
-            console.warn("Firestore devices onSnapshot notice:", error.message);
-          }
-        );
-      } catch (err) {
-        console.warn("Firestore onSnapshot attach notice:", err);
-      }
-    }
-
-    // C. Prune stale devices every 5 seconds
-    const pruneInterval = window.setInterval(() => {
-      const now = Date.now();
-      setRemoteMembers((prev) => {
-        let changed = false;
-        const next = new Map(prev);
-        for (const [id, dev] of next.entries()) {
-          let seenMs = 0;
-          if (typeof dev.lastSeen === "number") {
-            seenMs = dev.lastSeen;
-          } else if (
-            dev.lastSeen &&
-            typeof dev.lastSeen === "object" &&
-            "toMillis" in dev.lastSeen &&
-            typeof (dev.lastSeen as { toMillis: () => number }).toMillis === "function"
-          ) {
-            seenMs = (dev.lastSeen as { toMillis: () => number }).toMillis();
-          }
-          if (seenMs > 0 && now - seenMs > 12000) {
-            next.delete(id);
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-    }, 5000);
-
-    return () => {
-      clearInterval(pruneInterval);
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
-      if (localBroadcast) {
-        localBroadcast.postMessage({ type: "leave", device: selfDevice });
-        localBroadcast.close();
-      }
-      if (unsubFirestore) unsubFirestore();
-      if (db) {
-        deleteDoc(doc(db, "channels", channelCode, "devices", deviceId)).catch(() => {});
-      }
-    };
-  }, [currentUser, channelCode, deviceId, deviceName]);
-
-  // 4. Sync WebRTC Peers with Channel Members
+  // Firestore Fallback Transfers Listener (Architecture B - 24h Expiry)
   useEffect(() => {
-    const remoteIds = Array.from(remoteMembers.keys());
-    if (webrtcRef.current) {
-      webrtcRef.current.syncPeers(remoteIds);
-    }
-  }, [remoteMembers]);
-
-  // 5. Cloud Firestore Fallback Transfers Listener (Architecture B)
-  useEffect(() => {
-    if (!db || !currentUser) return;
+    if (!db || !currentUser || !channelCode || !deviceId) return;
 
     const transfersRef = collection(db, "channels", channelCode, "transfers");
     const q = query(transfersRef, where("recipientDeviceId", "in", ["all", deviceId]));
@@ -550,7 +471,7 @@ export default function Home() {
         });
       });
     } catch (err) {
-      console.warn("Firestore transfers listener notice:", err);
+      console.warn("[Firestore] Transfers listener notice:", err);
     }
 
     return () => {
@@ -558,10 +479,8 @@ export default function Home() {
     };
   }, [currentUser, channelCode, deviceId, deviceName, appendTransfer]);
 
-  // Authoritative Derived Devices List
+  // Derived Channel Members & Recipient List (Authoritative)
   const platformInfo = useMemo(() => getDevicePlatform(), []);
-
-  const [sessionStartTime] = useState<number>(() => (typeof Date !== "undefined" ? Date.now() : 0));
 
   const selfDevice = useMemo<Device>(() => ({
     id: deviceId,
@@ -572,9 +491,9 @@ export default function Home() {
     pairingCode: channelCode,
     online: true,
     state: "ONLINE",
-    lastSeen: sessionStartTime,
-    createdAt: sessionStartTime,
-  }), [deviceId, currentUser, channelCode, deviceName, platformInfo, sessionStartTime]);
+    lastSeen: 0,
+    createdAt: 0,
+  }), [deviceId, currentUser, channelCode, deviceName, platformInfo]);
 
   const otherDevices = useMemo(() => {
     return Array.from(remoteMembers.values()).filter((d) => d.id !== deviceId);
@@ -592,21 +511,20 @@ export default function Home() {
     return list;
   }, [peerStates]);
 
-  // Purely Derived Overall Status (No Synchronous Cascading setState)
+  // Explicit Overall Connection State
   const currentStatus: AppConnectionStatus = useMemo(() => {
-    if (authError) return "FIREBASE_ERROR";
+    if (!isWsConnected) return "CONNECTING_TO_SERVER";
     if (transferProgress !== null && transferProgress > 0 && transferProgress < 100) return "TRANSFERRING";
-    if (connectedPeerIds.length > 0) return "PEER_CONNECTED";
+    if (connectedPeerIds.length > 0) return "P2P_CONNECTED";
     if (otherDevices.length > 0) {
       const isAnyConnecting = Array.from(peerStates.values()).some((s) => s === "connecting");
       return isAnyConnecting ? "CONNECTING_PEER" : "DEVICE_DISCOVERED";
     }
-    if (!currentUser) return "AUTHENTICATING";
-    return "WAITING_FOR_DEVICE";
-  }, [authError, transferProgress, connectedPeerIds, otherDevices, peerStates, currentUser]);
+    return "CHANNEL_JOINED";
+  }, [isWsConnected, transferProgress, connectedPeerIds, otherDevices, peerStates]);
 
   // Rename Device Handler
-  const handleSaveName = async () => {
+  const handleSaveName = () => {
     const trimmed = nameInput.trim();
     if (!trimmed) {
       setNotice({ text: "Device name cannot be empty.", type: "warning" });
@@ -616,25 +534,18 @@ export default function Home() {
     localStorage.setItem(STORAGE_DEVICE_NAME, trimmed);
     setIsEditingName(false);
 
-    if (db) {
-      try {
-        await updateDoc(doc(db, "channels", channelCode, "devices", deviceId), {
-          deviceName: trimmed,
-          lastSeen: serverTimestamp(),
-        });
-      } catch (err) {
-        console.warn("Firestore rename notice:", err);
-      }
+    if (signalingRef.current) {
+      signalingRef.current.renameDevice(trimmed);
     }
     setNotice({ text: `Device renamed to "${trimmed}"`, type: "success" });
   };
 
-  // Join Channel Handler
+  // Join Specific Channel Handler
   const handleJoinChannel = (targetCode?: string) => {
     const raw = targetCode || channelInput;
     const code = raw.trim().toUpperCase();
-    if (!code) {
-      setNotice({ text: "Please enter a 6-character channel code.", type: "warning" });
+    if (!code || code.length < 3) {
+      setNotice({ text: "Please enter a valid channel code (3-12 characters).", type: "warning" });
       return;
     }
 
@@ -644,16 +555,45 @@ export default function Home() {
       return;
     }
 
-    if (db) {
-      deleteDoc(doc(db, "channels", channelCode, "devices", deviceId)).catch(() => {});
-    }
-
+    // Close existing peers & switch
+    webrtcRef.current?.closeAllPeers();
+    setRemoteMembers(new Map());
+    setPeerStates(new Map());
     setChannelCode(code);
     localStorage.setItem(STORAGE_CHANNEL_CODE, code);
     setChannelInput("");
+
+    if (signalingRef.current) {
+      signalingRef.current.switchChannel(code);
+    }
+    setNotice({ text: `Joined channel ${code}! Discovering devices...`, type: "success" });
+  };
+
+  // New Channel Handler (Generates fresh room code)
+  const handleNewChannel = () => {
+    const freshCode = generateRandomCode();
+    webrtcRef.current?.closeAllPeers();
     setRemoteMembers(new Map());
     setPeerStates(new Map());
-    setNotice({ text: `Joined channel ${code}! Discovering devices...`, type: "success" });
+    setChannelCode(freshCode);
+    localStorage.setItem(STORAGE_CHANNEL_CODE, freshCode);
+    setChannelInput("");
+
+    if (signalingRef.current) {
+      signalingRef.current.switchChannel(freshCode);
+    }
+    setNotice({ text: `Created new channel: ${freshCode}`, type: "success" });
+  };
+
+  // Leave Channel Handler
+  const handleLeaveChannel = () => {
+    webrtcRef.current?.closeAllPeers();
+    setRemoteMembers(new Map());
+    setPeerStates(new Map());
+    if (signalingRef.current) {
+      signalingRef.current.leaveChannel();
+    }
+    setNotice({ text: "Left channel. Enter or create a new channel code to connect.", type: "info" });
   };
 
   // Send Text Note via TransferManager
@@ -787,6 +727,31 @@ export default function Home() {
     }
   };
 
+  // Prevent SSR Hydration mismatch: return clean skeleton if not mounted yet
+  if (!isMounted) {
+    return (
+      <main className={styles.container}>
+        <div className={styles.shell}>
+          <header className={styles.header}>
+            <div className={styles.brand}>
+              <div className={styles.logoIcon}>⚡</div>
+              <div>
+                <h1 className={styles.brandTitle}>SlideDrop</h1>
+                <p className={styles.brandSubtitle}>Direct P2P & Cloud Cross-Device Transfer</p>
+              </div>
+            </div>
+            <div className={styles.headerActions}>
+              <div className={`${styles.statusBadge} ${styles.statusConnecting}`}>
+                <span className={styles.statusDot} />
+                Connecting...
+              </div>
+            </div>
+          </header>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className={styles.container}>
       <div className={styles.shell}>
@@ -803,13 +768,13 @@ export default function Home() {
           <div className={styles.headerActions}>
             <div
               className={`${styles.statusBadge} ${
-                currentStatus === "PEER_CONNECTED"
+                currentStatus === "P2P_CONNECTED"
                   ? styles.statusP2P
                   : currentStatus === "TRANSFERRING"
                   ? styles.statusConnecting
                   : currentStatus === "DEVICE_DISCOVERED" || currentStatus === "CONNECTING_PEER"
                   ? styles.statusConnecting
-                  : currentStatus === "WAITING_FOR_DEVICE"
+                  : currentStatus === "CHANNEL_JOINED"
                   ? styles.statusWaiting
                   : styles.statusDisconnected
               }`}
@@ -818,7 +783,7 @@ export default function Home() {
               title="Click to view connection diagnostics"
             >
               <span className={styles.statusDot} />
-              {currentStatus === "PEER_CONNECTED"
+              {currentStatus === "P2P_CONNECTED"
                 ? `🟢 P2P Connected (${connectedPeerIds.length} peer${connectedPeerIds.length > 1 ? "s" : ""})`
                 : currentStatus === "TRANSFERRING"
                 ? `⚡ Transferring (${transferProgress || 0}%)`
@@ -826,11 +791,11 @@ export default function Home() {
                 ? "Connecting P2P…"
                 : currentStatus === "DEVICE_DISCOVERED"
                 ? `🟢 Device Found (${otherDevices.length})`
-                : currentStatus === "WAITING_FOR_DEVICE"
+                : currentStatus === "CHANNEL_JOINED"
                 ? `Waiting for device (${channelCode})`
-                : currentStatus === "AUTHENTICATING"
-                ? "Connecting Firebase…"
-                : "Firebase Notice"}
+                : currentStatus === "CONNECTING_TO_SERVER"
+                ? "Connecting Server…"
+                : "Disconnected"}
             </div>
 
             <button className={styles.secondaryBtn} onClick={copyShareLink}>
@@ -881,6 +846,7 @@ export default function Home() {
                   className={styles.secondaryBtn}
                   style={{ padding: "3px 8px", fontSize: "11px" }}
                   onClick={copyChannelCode}
+                  title="Copy Channel Code"
                 >
                   Copy
                 </button>
@@ -888,15 +854,33 @@ export default function Home() {
 
               <input
                 className={styles.inlineInput}
-                style={{ width: "130px", minWidth: "110px", textTransform: "uppercase" }}
+                style={{ width: "120px", minWidth: "100px", textTransform: "uppercase" }}
                 placeholder="JOIN CODE"
-                maxLength={8}
+                maxLength={10}
                 value={channelInput}
                 onChange={(e) => setChannelInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleJoinChannel()}
               />
               <button className={styles.secondaryBtn} onClick={() => handleJoinChannel()}>
                 Join
+              </button>
+
+              <button
+                className={styles.secondaryBtn}
+                style={{ background: "#f1f5f9", borderColor: "#cbd5e1" }}
+                onClick={handleNewChannel}
+                title="Create a fresh new channel code"
+              >
+                🔄 New
+              </button>
+
+              <button
+                className={styles.secondaryBtn}
+                style={{ background: "#fef2f2", color: "#b91c1c", borderColor: "#fecaca" }}
+                onClick={handleLeaveChannel}
+                title="Leave the current channel"
+              >
+                🚪 Leave
               </button>
             </div>
           </div>
@@ -1015,7 +999,7 @@ export default function Home() {
               <span>📤 Send to Devices</span>
             </h2>
 
-            {/* Recipient Selector (Unified Authoritative Source) */}
+            {/* Recipient Selector (Authoritative) */}
             <div className={styles.fieldGroup}>
               <label className={styles.fieldLabel}>
                 <span>Send To</span>
@@ -1242,7 +1226,11 @@ export default function Home() {
 
               <div className={styles.diagnosticsContent}>
                 <div className={styles.diagRow}>
-                  <span>Channel Code:</span>
+                  <span>Signaling Server:</span>
+                  <strong>{getDefaultSignalingUrl()} ({isWsConnected ? "🟢 Connected" : "🔴 Disconnected"})</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>Active Channel:</span>
                   <strong>{channelCode}</strong>
                 </div>
                 <div className={styles.diagRow}>
@@ -1251,7 +1239,7 @@ export default function Home() {
                 </div>
                 <div className={styles.diagRow}>
                   <span>Auth Status:</span>
-                  <strong>{currentUser ? `Authenticated (${currentUser.uid.slice(0, 8)})` : "Connecting..."}</strong>
+                  <strong>{currentUser ? `Firebase Authenticated (${currentUser.uid.slice(0, 8)})` : "Anonymous"}</strong>
                 </div>
                 <div className={styles.diagRow}>
                   <span>Channel Members:</span>
@@ -1259,11 +1247,11 @@ export default function Home() {
                 </div>
                 <div className={styles.diagRow}>
                   <span>Direct WebRTC Peers:</span>
-                  <strong>{connectedPeerIds.length} active</strong>
+                  <strong>{connectedPeerIds.length} connected</strong>
                 </div>
                 <div className={styles.diagRow}>
                   <span>Active Architecture:</span>
-                  <strong>{connectedPeerIds.length > 0 ? "⚡ Architecture A (Direct P2P)" : "☁️ Architecture B (Cloud Relay)"}</strong>
+                  <strong>{connectedPeerIds.length > 0 ? "⚡ Architecture A (Direct WebRTC P2P)" : "☁️ Architecture B (Cloud Relay)"}</strong>
                 </div>
               </div>
             </div>
