@@ -204,7 +204,7 @@ async function forwardSignalingMessage(session: DeviceSession, msg: any, type: s
   }
 }
 
-wss.on("connection", (ws: WebSocket, req) => {
+wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
   const clientIp = req.socket.remoteAddress;
   console.log(`[Connect] New client connected from ${clientIp}`);
 
@@ -391,7 +391,7 @@ wss.on("connection", (ws: WebSocket, req) => {
     socketSessions.delete(ws);
   });
 
-  ws.on("error", (err) => {
+  ws.on("error", (err: Error) => {
     console.warn(`[Socket Error] ${session.deviceId}:`, err.message);
   });
 });
