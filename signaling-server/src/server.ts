@@ -138,7 +138,7 @@ function removeSessionFromChannel(session: DeviceSession) {
   const room = localChannels.get(channelCode);
   if (room) {
     room.delete(deviceId);
-    console.log(`[Leave] Device ${session.deviceName} (${deviceId}) left local channel ${channelCode} (${room.size} remaining)`);
+    console.log(`[WS] disconnect ${deviceId}`);
 
     const sync = firestoreSyncs.get(channelCode);
     if (sync) {
@@ -206,7 +206,7 @@ async function forwardSignalingMessage(session: DeviceSession, msg: any, type: s
 
 wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
   const clientIp = req.socket.remoteAddress;
-  console.log(`[Connect] New client connected from ${clientIp}`);
+  console.log(`[WS] connected ${clientIp}`);
 
   const session: DeviceSession = {
     ws,
@@ -272,7 +272,8 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
           }
 
           room.set(rawDeviceId, session);
-          console.log(`[Join] Device "${session.deviceName}" (${session.deviceId}) joined channel "${code}"`);
+          console.log(`[WS] register ${session.deviceId} ${session.deviceName}`);
+          console.log(`[CHANNEL] ${session.deviceId} joined ${code}`);
 
           const sync = getOrCreateFirestoreSync(code);
           
@@ -284,12 +285,51 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
               joinedAt: session.joinedAt
             });
             
+            const syncDevices = sync.getAllMembers().filter(m => m.id !== session.deviceId);
+            const localDevices = Array.from(room.values())
+              .filter(p => p.deviceId !== session.deviceId)
+              .map(p => ({
+                id: p.deviceId,
+                name: p.deviceName,
+                platform: p.platform,
+                joinedAt: p.joinedAt,
+              }));
+              
+            // Merge maps by ID to avoid duplicates
+            const allDevicesMap = new Map<string, DeviceInfo>();
+            for (const d of syncDevices) allDevicesMap.set(d.id, d);
+            for (const d of localDevices) allDevicesMap.set(d.id, d);
+            
+            const devices = Array.from(allDevicesMap.values());
+            console.log(`[CHANNEL] ${code} members=${devices.length} devices=${devices.map(d => d.id).join(",")}`);
+            
             sendJson(ws, {
               type: "joined",
               channelCode: code,
               self: { id: session.deviceId, name: session.deviceName, platform: session.platform, joinedAt: session.joinedAt },
-              devices: sync.getAllMembers().filter(m => m.id !== session.deviceId),
+              devices: devices,
             });
+
+            // Immediately notify local peers in case onSnapshot is delayed
+            const newMemberInfo: DeviceInfo = {
+              id: session.deviceId,
+              name: session.deviceName,
+              platform: session.platform,
+              joinedAt: session.joinedAt,
+            };
+            let broadcastCount = 0;
+            for (const [otherId, peer] of room.entries()) {
+              if (otherId !== session.deviceId) {
+                sendJson(peer.ws, {
+                  type: "device-joined",
+                  channelCode: code,
+                  device: newMemberInfo,
+                });
+                broadcastCount++;
+              }
+            }
+            console.log(`[CHANNEL] broadcasting members to ${broadcastCount} clients locally`);
+
           } else {
             // Local memory fallback mode
             const membersList: DeviceInfo[] = [];
@@ -303,6 +343,7 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
                 });
               }
             }
+            console.log(`[CHANNEL] ${code} members=${membersList.length} devices=${membersList.map(d => d.id).join(",")}`);
             sendJson(ws, {
               type: "joined",
               channelCode: code,
@@ -316,6 +357,7 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
               platform: session.platform,
               joinedAt: session.joinedAt,
             };
+            let broadcastCount = 0;
             for (const [otherId, peer] of room.entries()) {
               if (otherId !== session.deviceId) {
                 sendJson(peer.ws, {
@@ -323,8 +365,10 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
                   channelCode: code,
                   device: newMemberInfo,
                 });
+                broadcastCount++;
               }
             }
+            console.log(`[CHANNEL] broadcasting members to ${broadcastCount} clients locally`);
           }
           break;
         }
