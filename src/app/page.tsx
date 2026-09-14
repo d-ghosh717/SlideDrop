@@ -352,14 +352,12 @@ export default function Home() {
         }
         setRemoteMembers(map);
       },
-      onDeviceJoined: (device) => {
-        console.log("[Signaling] New device joined:", device.name, device.id);
-        setRemoteMembers((prev) => {
-          const next = new Map(prev);
-          next.set(device.id, device);
-          return next;
-        });
-        setNotice({ text: `🟢 ${device.name} joined the channel!`, type: "info" });
+      onMembersUpdated: (data) => {
+        const map = new Map<string, Device>();
+        for (const dev of data.devices) {
+          map.set(dev.id, dev);
+        }
+        setRemoteMembers(map);
       },
       onDeviceUpdated: (device) => {
         setRemoteMembers((prev) => {
@@ -367,17 +365,6 @@ export default function Home() {
           next.set(device.id, device);
           return next;
         });
-      },
-      onDeviceLeft: (leftDeviceId) => {
-        console.log("[Signaling] Device left:", leftDeviceId);
-        setRemoteMembers((prev) => {
-          const next = new Map(prev);
-          next.delete(leftDeviceId);
-          return next;
-        });
-        if (webrtc) {
-          webrtc.closePeer(leftDeviceId);
-        }
       },
       onOffer: (data) => {
         if (webrtc) {
@@ -620,14 +607,38 @@ export default function Home() {
     if (!transferManagerRef.current) return;
 
     setTransferStatusText("Sending note...");
-    const result = await transferManagerRef.current.sendText(recipient, targetRecipientName, text);
+    if (recipient === "all") {
+      const promises = otherDevices.map((d) =>
+        transferManagerRef.current!.sendText(d.id, d.name, text)
+      );
+      const results = await Promise.all(promises);
+      let successCount = 0;
+      results.forEach((r) => {
+        if (r.success) {
+          appendTransfer(r.transfer);
+          successCount++;
+        }
+      });
+      if (successCount > 0) {
+        setTextMessage("");
+        setTransferStatusText("");
+        setNotice({ text: `Text sent to ${successCount} devices!`, type: "success" });
+      }
+      return;
+    }
+
+    const result = await transferManagerRef.current.sendText(
+      recipient,
+      targetRecipientName,
+      text
+    );
 
     if (result.success) {
       appendTransfer(result.transfer);
       setTextMessage("");
       setTransferStatusText("");
       setNotice({
-        text: result.method === "p2p" ? "💬 Note sent directly via WebRTC P2P!" : "☁️ Note sent via Cloud Relay!",
+        text: result.method === "p2p" ? "Text sent via WebRTC P2P!" : "Text sent via Cloud Relay!",
         type: "success",
       });
     }
@@ -647,6 +658,33 @@ export default function Home() {
 
     setTransferStatusText("Preparing file for transfer...");
     setTransferProgress(0);
+
+    if (recipient === "all") {
+      const promises = otherDevices.map((d) =>
+        transferManagerRef.current!.sendFile(d.id, d.name, selectedFile, (percent) => {
+          // Progress can be noisy for multiple, maybe just update global or last
+          setTransferProgress(percent);
+          setTransferStatusText(`Transferring to ${d.name} (${percent}%)...`);
+        })
+      );
+      const results = await Promise.all(promises);
+      let successCount = 0;
+      results.forEach((r) => {
+        if (r.success) {
+          appendTransfer(r.transfer);
+          successCount++;
+        }
+      });
+
+      if (successCount > 0) {
+        setSelectedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setTransferProgress(null);
+        setTransferStatusText("");
+        setNotice({ text: `📁 "${selectedFile.name}" sent to ${successCount} devices!`, type: "success" });
+      }
+      return;
+    }
 
     const result = await transferManagerRef.current.sendFile(
       recipient,
@@ -971,7 +1009,7 @@ export default function Home() {
                       <p className={styles.deviceName}>{remote.name}</p>
                       <p className={styles.deviceSub}>
                         <span className={styles.onlineIndicator} />
-                        {isP2P ? "🟢 P2P Direct" : isConnecting ? "🟡 Connecting P2P" : "🟢 Online (Relay)"}
+                        {isP2P ? "P2P Connected" : isConnecting ? "Connecting" : "Cloud Available"}
                       </p>
                     </div>
                   </div>

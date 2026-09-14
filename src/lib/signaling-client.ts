@@ -10,9 +10,8 @@ export interface SignalingCallbacks {
   onConnected?: () => void;
   onDisconnected?: () => void;
   onJoined?: (data: { channelCode: string; self: { id: string; name: string; platform: string }; devices: Device[] }) => void;
-  onDeviceJoined?: (device: Device) => void;
+  onMembersUpdated?: (data: { channelCode: string; revision: number; devices: Device[] }) => void;
   onDeviceUpdated?: (device: Device) => void;
-  onDeviceLeft?: (deviceId: string) => void;
   onOffer?: (data: { fromDeviceId: string; sdp: RTCSessionDescriptionInit }) => void;
   onAnswer?: (data: { fromDeviceId: string; sdp: RTCSessionDescriptionInit }) => void;
   onIceCandidate?: (data: { fromDeviceId: string; candidate: RTCIceCandidateInit }) => void;
@@ -41,6 +40,7 @@ export class SignalingClient {
   public currentDeviceName: string = "";
   public currentPlatform: string = "browser";
   public isConnected = false;
+  private lastRevision: number = 0;
 
   constructor(callbacks: SignalingCallbacks, customUrl?: string) {
     this.callbacks = callbacks;
@@ -63,6 +63,7 @@ export class SignalingClient {
     this.currentDeviceId = deviceId;
     this.currentDeviceName = deviceName;
     this.currentPlatform = platform;
+    this.lastRevision = 0;
 
     if (this.ws) {
       this.closeSocket();
@@ -130,6 +131,7 @@ export class SignalingClient {
   public switchChannel(newChannelCode: string) {
     const code = newChannelCode.trim().toUpperCase();
     this.currentChannel = code;
+    this.lastRevision = 0;
     if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.send({
         type: "join",
@@ -235,6 +237,7 @@ export class SignalingClient {
   private handleMessage(msg: {
     type: string;
     channelCode?: string;
+    revision?: number;
     self?: { id: string; name: string; platform: string };
     devices?: Array<{ id: string; name: string; platform: string; joinedAt?: number }>;
     device?: { id: string; name: string; platform: string; joinedAt?: number };
@@ -246,8 +249,28 @@ export class SignalingClient {
   }) {
     switch (msg.type) {
       case "joined": {
+        // Only fired when local-memory fallback occurs if not using broadcastMembers,
+        // but now broadcastMembers will just send `members`. We might still keep it for backwards comp.
+        this.logEvent('joined', `channel=${msg.channelCode}`);
+        this.callbacks.onJoined?.({
+          channelCode: msg.channelCode || this.currentChannel,
+          self: msg.self || { id: this.currentDeviceId, name: this.currentDeviceName, platform: this.currentPlatform },
+          devices: [],
+        });
+        break;
+      }
+
+      case "members": {
+        const rev = msg.revision || 0;
+        if (rev <= this.lastRevision && rev !== 0) {
+          console.warn(`[SignalingClient] Ignoring stale members snapshot. Received revision ${rev}, current is ${this.lastRevision}`);
+          break;
+        }
+        this.lastRevision = rev;
+
         const rawDevices = msg.devices || [];
-        this.logEvent('joined', `channel=${msg.channelCode} peers=${rawDevices.length} (${rawDevices.map(d => d.name).join(', ') || 'none'})`);
+        this.logEvent('members', `channel=${msg.channelCode} revision=${rev} peers=${rawDevices.length}`);
+        
         const formattedDevices: Device[] = rawDevices.map((d) => ({
           id: d.id,
           userId: d.id,
@@ -261,32 +284,11 @@ export class SignalingClient {
           createdAt: d.joinedAt || Date.now(),
         }));
 
-        this.callbacks.onJoined?.({
+        this.callbacks.onMembersUpdated?.({
           channelCode: msg.channelCode || this.currentChannel,
-          self: msg.self || { id: this.currentDeviceId, name: this.currentDeviceName, platform: this.currentPlatform },
+          revision: rev,
           devices: formattedDevices,
         });
-        break;
-      }
-
-      case "device-joined": {
-        if (msg.device) {
-          const d = msg.device;
-          this.logEvent('device-joined', `${d.name} (${d.id}) joined channel`);
-          const formatted: Device = {
-            id: d.id,
-            userId: d.id,
-            accountId: msg.channelCode || this.currentChannel,
-            name: d.name,
-            type: d.platform || "browser",
-            pairingCode: msg.channelCode || this.currentChannel,
-            online: true,
-            state: "ONLINE",
-            lastSeen: d.joinedAt || Date.now(),
-            createdAt: d.joinedAt || Date.now(),
-          };
-          this.callbacks.onDeviceJoined?.(formatted);
-        }
         break;
       }
 
@@ -306,14 +308,6 @@ export class SignalingClient {
             createdAt: Date.now(),
           };
           this.callbacks.onDeviceUpdated?.(formatted);
-        }
-        break;
-      }
-
-      case "device-left": {
-        if (msg.deviceId) {
-          this.logEvent('device-left', `Device ${msg.deviceId} left channel`);
-          this.callbacks.onDeviceLeft?.(msg.deviceId);
         }
         break;
       }

@@ -28,6 +28,8 @@ interface DeviceSession {
 const localChannels = new Map<string, Map<string, DeviceSession>>();
 // Firestore sync managers: channelCode -> FirestoreChannelSync
 const firestoreSyncs = new Map<string, FirestoreChannelSync>();
+// Channel revisions to prevent out-of-order race conditions
+const channelRevisions = new Map<string, number>();
 
 // Socket to session mapping
 const socketSessions = new Map<WebSocket, DeviceSession>();
@@ -73,6 +75,44 @@ function normalizeChannel(code: unknown): string {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
 }
 
+function broadcastMembers(code: string) {
+  if (!localChannels.has(code)) return;
+  const room = localChannels.get(code)!;
+  
+  let revision = (channelRevisions.get(code) || 0) + 1;
+  channelRevisions.set(code, revision);
+
+  const sync = firestoreSyncs.get(code);
+  const allDevicesMap = new Map<string, DeviceInfo>();
+  
+  if (sync) {
+    const syncDevices = sync.getAllMembers();
+    for (const d of syncDevices) allDevicesMap.set(d.id, d);
+  }
+  
+  for (const p of room.values()) {
+    allDevicesMap.set(p.deviceId, {
+      id: p.deviceId,
+      name: p.deviceName,
+      platform: p.platform,
+      joinedAt: p.joinedAt,
+    });
+  }
+  
+  const devices = Array.from(allDevicesMap.values());
+  console.log(`[CHANNEL] ${code} revision=${revision} members=${devices.length} devices=${devices.map(d => d.id).join(",")}`);
+  
+  for (const session of room.values()) {
+    const peers = devices.filter(d => d.id !== session.deviceId);
+    sendJson(session.ws, {
+      type: "members",
+      channelCode: code,
+      revision: revision,
+      devices: peers,
+    });
+  }
+}
+
 function getOrCreateFirestoreSync(code: string): FirestoreChannelSync | null {
   if (!firestore) return null;
   if (!firestoreSyncs.has(code)) {
@@ -80,33 +120,11 @@ function getOrCreateFirestoreSync(code: string): FirestoreChannelSync | null {
       code,
       (member) => {
         // onMemberAdded
-        const room = localChannels.get(code);
-        if (room) {
-          for (const [id, session] of room.entries()) {
-            if (id !== member.id) {
-              sendJson(session.ws, {
-                type: "device-joined",
-                channelCode: code,
-                device: member,
-              });
-            }
-          }
-        }
+        broadcastMembers(code);
       },
       (deviceId) => {
         // onMemberRemoved
-        const room = localChannels.get(code);
-        if (room) {
-          for (const [id, session] of room.entries()) {
-            if (id !== deviceId) {
-              sendJson(session.ws, {
-                type: "device-left",
-                channelCode: code,
-                deviceId,
-              });
-            }
-          }
-        }
+        broadcastMembers(code);
       },
       (msg) => {
         // onMessage
@@ -144,16 +162,7 @@ function removeSessionFromChannel(session: DeviceSession) {
     if (sync) {
       sync.unregisterLocalDevice(deviceId);
     } else {
-      // Notify remaining local peers
-      for (const [otherId, peer] of room.entries()) {
-        if (otherId !== deviceId) {
-          sendJson(peer.ws, {
-            type: "device-left",
-            channelCode,
-            deviceId,
-          });
-        }
-      }
+      broadcastMembers(channelCode);
     }
 
     // Clean up empty channels
@@ -284,92 +293,12 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
               platform: session.platform,
               joinedAt: session.joinedAt
             });
-            
-            const syncDevices = sync.getAllMembers().filter(m => m.id !== session.deviceId);
-            const localDevices = Array.from(room.values())
-              .filter(p => p.deviceId !== session.deviceId)
-              .map(p => ({
-                id: p.deviceId,
-                name: p.deviceName,
-                platform: p.platform,
-                joinedAt: p.joinedAt,
-              }));
-              
-            // Merge maps by ID to avoid duplicates
-            const allDevicesMap = new Map<string, DeviceInfo>();
-            for (const d of syncDevices) allDevicesMap.set(d.id, d);
-            for (const d of localDevices) allDevicesMap.set(d.id, d);
-            
-            const devices = Array.from(allDevicesMap.values());
-            console.log(`[CHANNEL] ${code} members=${devices.length} devices=${devices.map(d => d.id).join(",")}`);
-            
-            sendJson(ws, {
-              type: "joined",
-              channelCode: code,
-              self: { id: session.deviceId, name: session.deviceName, platform: session.platform, joinedAt: session.joinedAt },
-              devices: devices,
-            });
-
-            // Immediately notify local peers in case onSnapshot is delayed
-            const newMemberInfo: DeviceInfo = {
-              id: session.deviceId,
-              name: session.deviceName,
-              platform: session.platform,
-              joinedAt: session.joinedAt,
-            };
-            let broadcastCount = 0;
-            for (const [otherId, peer] of room.entries()) {
-              if (otherId !== session.deviceId) {
-                sendJson(peer.ws, {
-                  type: "device-joined",
-                  channelCode: code,
-                  device: newMemberInfo,
-                });
-                broadcastCount++;
-              }
-            }
-            console.log(`[CHANNEL] broadcasting members to ${broadcastCount} clients locally`);
-
-          } else {
-            // Local memory fallback mode
-            const membersList: DeviceInfo[] = [];
-            for (const [otherId, peer] of room.entries()) {
-              if (otherId !== session.deviceId) {
-                membersList.push({
-                  id: peer.deviceId,
-                  name: peer.deviceName,
-                  platform: peer.platform,
-                  joinedAt: peer.joinedAt,
-                });
-              }
-            }
-            console.log(`[CHANNEL] ${code} members=${membersList.length} devices=${membersList.map(d => d.id).join(",")}`);
-            sendJson(ws, {
-              type: "joined",
-              channelCode: code,
-              self: { id: session.deviceId, name: session.deviceName, platform: session.platform, joinedAt: session.joinedAt },
-              devices: membersList,
-            });
-
-            const newMemberInfo: DeviceInfo = {
-              id: session.deviceId,
-              name: session.deviceName,
-              platform: session.platform,
-              joinedAt: session.joinedAt,
-            };
-            let broadcastCount = 0;
-            for (const [otherId, peer] of room.entries()) {
-              if (otherId !== session.deviceId) {
-                sendJson(peer.ws, {
-                  type: "device-joined",
-                  channelCode: code,
-                  device: newMemberInfo,
-                });
-                broadcastCount++;
-              }
-            }
-            console.log(`[CHANNEL] broadcasting members to ${broadcastCount} clients locally`);
+            // sync.registerLocalDevice triggers onMemberAdded internally?
+            // No, it doesn't trigger for the device itself locally in firestore-sync
           }
+          
+          // Broadcast members directly to all devices in the channel
+          broadcastMembers(code);
           break;
         }
         case "leave": {
@@ -391,22 +320,9 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
                 platform: session.platform,
                 joinedAt: session.joinedAt
               });
-            } else if (code && localChannels.has(code)) {
-              const room = localChannels.get(code)!;
-              for (const [otherId, peer] of room.entries()) {
-                if (otherId !== session.deviceId) {
-                  sendJson(peer.ws, {
-                    type: "device-updated",
-                    channelCode: code,
-                    device: {
-                      id: session.deviceId,
-                      name: session.deviceName,
-                      platform: session.platform,
-                      joinedAt: session.joinedAt,
-                    },
-                  });
-                }
-              }
+            }
+            if (code) {
+              broadcastMembers(code);
             }
           }
           break;

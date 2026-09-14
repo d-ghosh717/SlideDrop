@@ -40,9 +40,6 @@ export class TransferManager {
   // Determine whether to use local P2P or remote Cloud Storage
   public canUseP2P(recipientId: string): boolean {
     if (!this.webrtc) return false;
-    if (recipientId === "all") {
-      return this.webrtc.getConnectedPeerCount() > 0;
-    }
     return this.webrtc.isConnectedToPeer(recipientId);
   }
 
@@ -52,9 +49,7 @@ export class TransferManager {
     if (!this.webrtc) return false;
 
     // Check if we are currently connecting to any relevant peers
-    const isConnecting = recipientId === "all" 
-      ? Array.from(this.webrtc["peerConnections"]?.keys() || []).some(id => this.webrtc!.isConnectingToPeer(id))
-      : this.webrtc.isConnectingToPeer(recipientId);
+    const isConnecting = this.webrtc.isConnectingToPeer(recipientId);
 
     if (!isConnecting) return false;
 
@@ -79,7 +74,7 @@ export class TransferManager {
 
     // Architecture A: Direct local P2P WebRTC DataChannel
     if (isP2P && this.webrtc) {
-      const sent = this.webrtc.sendText(text, this.localDeviceName, recipientId === "all" ? undefined : recipientId);
+      const sent = this.webrtc.sendText(text, this.localDeviceName, recipientId);
       if (sent) {
         return {
           method: "p2p",
@@ -168,7 +163,7 @@ export class TransferManager {
         const sent = await this.webrtc.sendFile(
           file,
           this.localDeviceName,
-          recipientId === "all" ? undefined : recipientId,
+          recipientId,
           onProgress
         );
         if (sent) {

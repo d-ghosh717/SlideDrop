@@ -298,7 +298,7 @@ export class WebRTCManager {
   }
 
   // Send Text Note over WebRTC DataChannel
-  public sendText(text: string, senderName: string, targetPeerId?: string): boolean {
+  public sendText(text: string, senderName: string, targetPeerId: string): boolean {
     const transferId = "txt_" + Math.random().toString(36).substring(2, 10);
     const msg: WebRTCDataMessage = {
       type: "text",
@@ -311,7 +311,7 @@ export class WebRTCManager {
 
     let sent = false;
     for (const [peerId, dc] of this.dataChannels.entries()) {
-      if (targetPeerId && targetPeerId !== "all" && peerId !== targetPeerId) continue;
+      if (peerId !== targetPeerId) continue;
       if (dc.readyState === "open") {
         dc.send(payload);
         sent = true;
@@ -324,12 +324,12 @@ export class WebRTCManager {
   public async sendFile(
     file: File,
     senderName: string,
-    targetPeerId?: string,
+    targetPeerId: string,
     onProgress?: (percent: number) => void
   ): Promise<boolean> {
     const openChannels: { peerId: string; dc: RTCDataChannel }[] = [];
     for (const [peerId, dc] of this.dataChannels.entries()) {
-      if (targetPeerId && targetPeerId !== "all" && peerId !== targetPeerId) continue;
+      if (peerId !== targetPeerId) continue;
       if (dc.readyState === "open") openChannels.push({ peerId, dc });
     }
 
