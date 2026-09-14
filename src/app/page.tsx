@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { onAuthStateChanged, signInAnonymously, User } from "firebase/auth";
 import {
-  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -15,9 +14,9 @@ import {
   where,
   Unsubscribe,
 } from "firebase/firestore";
-import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { auth, db, storage } from "@/lib/firebase";
 import { WebRTCManager } from "@/lib/webrtc";
+import { TransferManager } from "@/lib/transfer-manager";
 import type { Device, Transfer } from "@/lib/types";
 import styles from "./page.module.css";
 
@@ -28,12 +27,15 @@ const STORAGE_DEVICE_NAME = "slidedrop-device-name";
 const STORAGE_CHANNEL_CODE = "slidedrop-channel-code";
 const STORAGE_TRANSFERS = "slidedrop-transfers-history";
 
-type ConnectionStatus =
+type AppConnectionStatus =
   | "INITIALIZING"
   | "AUTHENTICATING"
   | "WAITING_FOR_DEVICE"
+  | "DEVICE_DISCOVERED"
   | "CONNECTING_PEER"
   | "PEER_CONNECTED"
+  | "SECURE_RELAY"
+  | "TRANSFERRING"
   | "FIREBASE_ERROR"
   | "DISCONNECTED";
 
@@ -50,11 +52,11 @@ function getDevicePlatform(): { type: "desktop" | "mobile" | "tablet" | "browser
 
   if (isTablet) return { type: "tablet", defaultName: "iPad", icon: "📱" };
   if (/iPhone/i.test(ua)) return { type: "mobile", defaultName: "iPhone", icon: "📱" };
-  if (/Android/i.test(ua)) return { type: "mobile", defaultName: "Android", icon: "📱" };
+  if (/Android/i.test(ua)) return { type: "mobile", defaultName: "Android Phone", icon: "📱" };
   if (isMac) return { type: "desktop", defaultName: "MacBook", icon: "💻" };
   if (isWindows) return { type: "desktop", defaultName: "Windows PC", icon: "🖥️" };
   if (isLinux) return { type: "desktop", defaultName: "Linux Desktop", icon: "🖥️" };
-  if (isMobile) return { type: "mobile", defaultName: "Mobile", icon: "📱" };
+  if (isMobile) return { type: "mobile", defaultName: "Mobile Device", icon: "📱" };
   return { type: "desktop", defaultName: "Browser", icon: "🌐" };
 }
 
@@ -119,7 +121,7 @@ function formatTime(timestamp: unknown): string {
 }
 
 export default function Home() {
-  // 1. Device identity (persistent UUID)
+  // 1. Local Device Identity
   const [deviceId] = useState<string>(() => {
     if (typeof window === "undefined") return "server-id";
     let stored = localStorage.getItem(STORAGE_DEVICE_ID);
@@ -140,7 +142,7 @@ export default function Home() {
     return stored;
   });
 
-  // 2. Channel code state
+  // 2. Channel Code State
   const [channelCode, setChannelCode] = useState<string>(() => {
     if (typeof window === "undefined") return "YYXJ8C";
     const params = new URLSearchParams(window.location.search);
@@ -162,20 +164,17 @@ export default function Home() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(deviceName);
 
-  // 3. Firebase Auth & Connection states
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [status, setStatus] = useState<ConnectionStatus>(() => {
-    if (!auth) return "FIREBASE_ERROR";
-    return "AUTHENTICATING";
-  });
-  const [errorMessage, setErrorMessage] = useState<string | null>(() => {
-    if (!auth) return "Firebase Auth instance not initialized.";
-    return null;
-  });
-  const [connectedPeerIds, setConnectedPeerIds] = useState<string[]>([]);
-  const [devices, setDevices] = useState<Device[]>([]);
+  // 3. Remote Channel Members (Authoritative State from Network)
+  const [remoteMembers, setRemoteMembers] = useState<Map<string, Device>>(new Map());
+  const [peerStates, setPeerStates] = useState<Map<string, "connecting" | "connected" | "disconnected">>(new Map());
 
-  // 4. Transfers & Composer states
+  // 4. Firebase Auth & Status
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+
+  // 5. Transfers & Composer States
   const [transfers, setTransfers] = useState<Transfer[]>(() => {
     if (typeof window === "undefined") return [];
     const raw = localStorage.getItem(STORAGE_TRANSFERS);
@@ -196,10 +195,10 @@ export default function Home() {
   const [transferStatusText, setTransferStatusText] = useState<string>("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; type: "success" | "warning" | "info" } | null>(null);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const webrtcRef = useRef<WebRTCManager | null>(null);
+  const transferManagerRef = useRef<TransferManager | null>(null);
 
   // Append transfer helper
   const appendTransfer = useCallback((transfer: Transfer) => {
@@ -218,16 +217,16 @@ export default function Home() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setCurrentUser(user);
-        setStatus("WAITING_FOR_DEVICE");
+        setAuthError(null);
       } else {
         try {
           const cred = await signInAnonymously(auth);
           setCurrentUser(cred.user);
-          setStatus("WAITING_FOR_DEVICE");
+          setAuthError(null);
         } catch (err: unknown) {
-          setStatus("FIREBASE_ERROR");
           const code = err && typeof err === "object" && "code" in err ? String(err.code) : "unknown";
-          setErrorMessage(`Firebase Auth error (${code}). Check Firebase Console > Authentication > Anonymous.`);
+          setAuthError(code);
+          setErrorMessage(`Firebase Auth notice (${code}).`);
         }
       }
     });
@@ -235,27 +234,24 @@ export default function Home() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Initialize WebRTC Manager with Firestore Signaling
+  // 2. WebRTC Manager Lifecycle
   useEffect(() => {
-    if (!db || !currentUser || typeof window === "undefined") return;
+    if (typeof window === "undefined") return;
 
     const callbacks = {
       onPeerConnected: (peerId: string) => {
-        setConnectedPeerIds((prev) => {
-          if (prev.includes(peerId)) return prev;
-          return [...prev, peerId];
-        });
-        setStatus("PEER_CONNECTED");
-        setNotice({ text: "Connected directly via WebRTC P2P DataChannel!", type: "success" });
+        setPeerStates((prev) => new Map(prev).set(peerId, "connected"));
+        setNotice({ text: "🟢 Direct WebRTC P2P DataChannel established!", type: "success" });
       },
       onPeerDisconnected: (peerId: string) => {
-        setConnectedPeerIds((prev) => {
-          const updated = prev.filter((id) => id !== peerId);
-          if (updated.length === 0) {
-            setStatus("WAITING_FOR_DEVICE");
-          }
-          return updated;
+        setPeerStates((prev) => {
+          const next = new Map(prev);
+          next.delete(peerId);
+          return next;
         });
+      },
+      onPeerStateChange: (peerId: string, state: "connecting" | "connected" | "disconnected") => {
+        setPeerStates((prev) => new Map(prev).set(peerId, state));
       },
       onTextMessage: (msg: { id: string; text: string; senderName: string; timestamp: number; peerDeviceId: string }) => {
         const transfer: Transfer = {
@@ -276,7 +272,7 @@ export default function Home() {
           expiresAt: new Date(msg.timestamp + 86400000).toISOString(),
         };
         appendTransfer(transfer);
-        setNotice({ text: `Received note from ${msg.senderName}`, type: "success" });
+        setNotice({ text: `💬 Received note from ${msg.senderName}`, type: "success" });
       },
       onFileProgress: (transferId: string, percent: number, direction: "send" | "receive") => {
         setTransferProgress(percent);
@@ -285,7 +281,7 @@ export default function Home() {
           setTimeout(() => {
             setTransferProgress(null);
             setTransferStatusText("");
-          }, 1000);
+          }, 1200);
         }
       },
       onFileReceived: (fileTransfer: {
@@ -315,113 +311,204 @@ export default function Home() {
           expiresAt: new Date(fileTransfer.timestamp + 86400000).toISOString(),
         };
         appendTransfer(transfer);
-        setNotice({ text: `Received "${fileTransfer.filename}" from ${fileTransfer.senderName}!`, type: "success" });
+        setNotice({ text: `📁 Received "${fileTransfer.filename}" from ${fileTransfer.senderName}!`, type: "success" });
       },
     };
 
-    const mgr = new WebRTCManager(db, deviceId, currentUser.uid, channelCode, callbacks);
+    const mgr = new WebRTCManager(db, deviceId, currentUser?.uid || "anon-user", channelCode, callbacks);
     mgr.startSignaling();
     webrtcRef.current = mgr;
+
+    transferManagerRef.current = new TransferManager(
+      mgr,
+      db,
+      storage,
+      deviceId,
+      deviceName,
+      currentUser?.uid || "anon-user",
+      channelCode
+    );
 
     return () => {
       mgr.stop();
       webrtcRef.current = null;
+      transferManagerRef.current = null;
     };
   }, [currentUser, channelCode, deviceId, deviceName, appendTransfer]);
 
-  // 3. Register Device in Firestore & Realtime Presence Subscription
+  // 3. Presence: Register Self and Discover Channel Members (Firestore + BroadcastChannel)
   useEffect(() => {
-    if (!db || !currentUser) return;
-
     const platform = getDevicePlatform();
-    const deviceDocRef = doc(db, "channels", channelCode, "devices", deviceId);
-
-    // Register / update device document in Firestore
-    const updatePresence = () => {
-      setDoc(
-        deviceDocRef,
-        {
-          deviceId,
-          deviceName,
-          platform: platform.type,
-          uid: currentUser.uid,
-          lastSeen: serverTimestamp(),
-          online: true,
-        },
-        { merge: true }
-      ).catch((err) => {
-        console.warn("Firestore presence write error:", err);
-        if (err && typeof err === "object" && "code" in err && err.code === "permission-denied") {
-          setStatus("FIREBASE_ERROR");
-          setErrorMessage("Firestore API is not enabled in Firebase Console (or rules rejected access). Visit Firebase Console > Firestore Database to create it.");
-        }
-      });
+    const selfDevice: Device = {
+      id: deviceId,
+      userId: currentUser?.uid || "anon-user",
+      accountId: channelCode,
+      name: deviceName,
+      type: platform.type,
+      pairingCode: channelCode,
+      online: true,
+      state: "ONLINE",
+      lastSeen: Date.now(),
+      createdAt: Date.now(),
     };
 
-    updatePresence();
-    const heartbeatInterval = window.setInterval(updatePresence, 5000);
-
-    // Realtime Listener for all devices in channel
-    const devicesRef = collection(db, "channels", channelCode, "devices");
-    let unsubDevices: Unsubscribe | null = null;
-
-    try {
-      unsubDevices = onSnapshot(
-        devicesRef,
-        (snapshot) => {
-          const list: Device[] = [];
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            list.push({
-              id: data.deviceId || docSnap.id,
-              userId: data.uid,
-              accountId: channelCode,
-              name: data.deviceName || "Device",
-              type: data.platform || "browser",
-              pairingCode: channelCode,
-              online: data.online !== false,
-              lastSeen: data.lastSeen,
-              createdAt: data.lastSeen,
+    // A. Local BroadcastChannel for instant same-browser presence
+    let localBroadcast: BroadcastChannel | null = null;
+    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+      try {
+        localBroadcast = new BroadcastChannel(`slidedrop_presence_${channelCode}`);
+        localBroadcast.onmessage = (event) => {
+          const { type, device } = event.data || {};
+          if (type === "heartbeat" && device && device.id !== deviceId) {
+            setRemoteMembers((prev) => {
+              const next = new Map(prev);
+              next.set(device.id, {
+                ...device,
+                state: "ONLINE",
+                online: true,
+                lastSeen: Date.now(),
+              });
+              return next;
             });
-          });
-
-          setDevices(list);
-
-          const remoteIds = list.map((d) => d.id).filter((id) => id !== deviceId);
-
-          if (webrtcRef.current) {
-            webrtcRef.current.syncPeers(remoteIds);
-            const p2pCount = webrtcRef.current.getConnectedPeerCount();
-            if (p2pCount > 0) {
-              setStatus("PEER_CONNECTED");
-            } else if (remoteIds.length > 0) {
-              setStatus("CONNECTING_PEER");
-            } else {
-              setStatus("WAITING_FOR_DEVICE");
-            }
+          } else if (type === "leave" && device) {
+            setRemoteMembers((prev) => {
+              const next = new Map(prev);
+              next.delete(device.id);
+              return next;
+            });
           }
-        },
-        (error) => {
-          console.warn("Firestore devices onSnapshot error:", error);
-          if (error.code === "permission-denied") {
-            setStatus("FIREBASE_ERROR");
-            setErrorMessage("Firestore permission denied or API not enabled in Firebase Console.");
-          }
-        }
-      );
-    } catch (err) {
-      console.warn("Could not attach Firestore onSnapshot:", err);
+        };
+
+        localBroadcast.postMessage({ type: "heartbeat", device: selfDevice });
+      } catch (err) {
+        console.warn("Local broadcast error:", err);
+      }
     }
 
-    // Cleanup when unmounting or changing channel
+    // B. Cloud Firestore Presence
+    let unsubFirestore: Unsubscribe | null = null;
+    let heartbeatTimer: number | null = null;
+
+    if (db) {
+      const deviceDocRef = doc(db, "channels", channelCode, "devices", deviceId);
+
+      const sendHeartbeat = () => {
+        setDoc(
+          deviceDocRef,
+          {
+            deviceId,
+            deviceName,
+            platform: platform.type,
+            uid: currentUser?.uid || "anon-user",
+            lastSeen: serverTimestamp(),
+            online: true,
+          },
+          { merge: true }
+        ).catch((err) => {
+          console.warn("Firestore presence notice:", err.message);
+        });
+
+        if (localBroadcast) {
+          localBroadcast.postMessage({
+            type: "heartbeat",
+            device: selfDevice,
+          });
+        }
+      };
+
+      sendHeartbeat();
+      heartbeatTimer = window.setInterval(sendHeartbeat, 4000);
+
+      // Listen for remote channel members
+      try {
+        const devicesRef = collection(db, "channels", channelCode, "devices");
+        unsubFirestore = onSnapshot(
+          devicesRef,
+          (snapshot) => {
+            setRemoteMembers((prev) => {
+              const next = new Map(prev);
+
+              snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                const dId = data.deviceId || docSnap.id;
+                if (dId === deviceId) return;
+
+                next.set(dId, {
+                  id: dId,
+                  userId: data.uid || "anon",
+                  accountId: channelCode,
+                  name: data.deviceName || "Device",
+                  type: data.platform || "browser",
+                  pairingCode: channelCode,
+                  online: data.online !== false,
+                  state: "ONLINE",
+                  lastSeen: data.lastSeen,
+                  createdAt: data.lastSeen,
+                });
+              });
+
+              return next;
+            });
+          },
+          (error) => {
+            console.warn("Firestore devices onSnapshot notice:", error.message);
+          }
+        );
+      } catch (err) {
+        console.warn("Firestore onSnapshot attach notice:", err);
+      }
+    }
+
+    // C. Prune stale devices every 5 seconds
+    const pruneInterval = window.setInterval(() => {
+      const now = Date.now();
+      setRemoteMembers((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const [id, dev] of next.entries()) {
+          let seenMs = 0;
+          if (typeof dev.lastSeen === "number") {
+            seenMs = dev.lastSeen;
+          } else if (
+            dev.lastSeen &&
+            typeof dev.lastSeen === "object" &&
+            "toMillis" in dev.lastSeen &&
+            typeof (dev.lastSeen as { toMillis: () => number }).toMillis === "function"
+          ) {
+            seenMs = (dev.lastSeen as { toMillis: () => number }).toMillis();
+          }
+          if (seenMs > 0 && now - seenMs > 12000) {
+            next.delete(id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 5000);
+
     return () => {
-      clearInterval(heartbeatInterval);
-      if (unsubDevices) unsubDevices();
-      deleteDoc(deviceDocRef).catch(() => {});
+      clearInterval(pruneInterval);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (localBroadcast) {
+        localBroadcast.postMessage({ type: "leave", device: selfDevice });
+        localBroadcast.close();
+      }
+      if (unsubFirestore) unsubFirestore();
+      if (db) {
+        deleteDoc(doc(db, "channels", channelCode, "devices", deviceId)).catch(() => {});
+      }
     };
   }, [currentUser, channelCode, deviceId, deviceName]);
 
-  // 4. Firestore Fallback Transfers Listener
+  // 4. Sync WebRTC Peers with Channel Members
+  useEffect(() => {
+    const remoteIds = Array.from(remoteMembers.keys());
+    if (webrtcRef.current) {
+      webrtcRef.current.syncPeers(remoteIds);
+    }
+  }, [remoteMembers]);
+
+  // 5. Cloud Firestore Fallback Transfers Listener (Architecture B)
   useEffect(() => {
     if (!db || !currentUser) return;
 
@@ -442,7 +529,7 @@ export default function Home() {
                 senderDeviceId: data.senderDeviceId,
                 recipientDeviceId: data.recipientDeviceId,
                 senderName: data.senderName,
-                recipientName: data.recipientName,
+                recipientName: data.recipientName || deviceName,
                 filename: data.filename,
                 mimeType: data.mimeType,
                 size: data.size,
@@ -454,20 +541,71 @@ export default function Home() {
                 expiresAt: new Date(Date.now() + 86400000).toISOString(),
               };
               appendTransfer(transfer);
+              setNotice({
+                text: `☁️ Received ${data.textContent ? "note" : `"${data.filename}"`} from ${data.senderName} via Cloud Relay!`,
+                type: "success",
+              });
             }
           }
         });
       });
     } catch (err) {
-      console.warn("Firestore transfers listener error:", err);
+      console.warn("Firestore transfers listener notice:", err);
     }
 
     return () => {
       if (unsubTransfers) unsubTransfers();
     };
-  }, [currentUser, channelCode, deviceId, appendTransfer]);
+  }, [currentUser, channelCode, deviceId, deviceName, appendTransfer]);
 
-  // 5. Rename Device
+  // Authoritative Derived Devices List
+  const platformInfo = useMemo(() => getDevicePlatform(), []);
+
+  const [sessionStartTime] = useState<number>(() => (typeof Date !== "undefined" ? Date.now() : 0));
+
+  const selfDevice = useMemo<Device>(() => ({
+    id: deviceId,
+    userId: currentUser?.uid || "anon-user",
+    accountId: channelCode,
+    name: deviceName,
+    type: platformInfo.type,
+    pairingCode: channelCode,
+    online: true,
+    state: "ONLINE",
+    lastSeen: sessionStartTime,
+    createdAt: sessionStartTime,
+  }), [deviceId, currentUser, channelCode, deviceName, platformInfo, sessionStartTime]);
+
+  const otherDevices = useMemo(() => {
+    return Array.from(remoteMembers.values()).filter((d) => d.id !== deviceId);
+  }, [remoteMembers, deviceId]);
+
+  const allDevices = useMemo(() => {
+    return [selfDevice, ...otherDevices];
+  }, [selfDevice, otherDevices]);
+
+  const connectedPeerIds = useMemo(() => {
+    const list: string[] = [];
+    for (const [id, st] of peerStates.entries()) {
+      if (st === "connected") list.push(id);
+    }
+    return list;
+  }, [peerStates]);
+
+  // Purely Derived Overall Status (No Synchronous Cascading setState)
+  const currentStatus: AppConnectionStatus = useMemo(() => {
+    if (authError) return "FIREBASE_ERROR";
+    if (transferProgress !== null && transferProgress > 0 && transferProgress < 100) return "TRANSFERRING";
+    if (connectedPeerIds.length > 0) return "PEER_CONNECTED";
+    if (otherDevices.length > 0) {
+      const isAnyConnecting = Array.from(peerStates.values()).some((s) => s === "connecting");
+      return isAnyConnecting ? "CONNECTING_PEER" : "DEVICE_DISCOVERED";
+    }
+    if (!currentUser) return "AUTHENTICATING";
+    return "WAITING_FOR_DEVICE";
+  }, [authError, transferProgress, connectedPeerIds, otherDevices, peerStates, currentUser]);
+
+  // Rename Device Handler
   const handleSaveName = async () => {
     const trimmed = nameInput.trim();
     if (!trimmed) {
@@ -478,21 +616,21 @@ export default function Home() {
     localStorage.setItem(STORAGE_DEVICE_NAME, trimmed);
     setIsEditingName(false);
 
-    if (db && currentUser) {
+    if (db) {
       try {
         await updateDoc(doc(db, "channels", channelCode, "devices", deviceId), {
           deviceName: trimmed,
           lastSeen: serverTimestamp(),
         });
       } catch (err) {
-        console.warn("Could not update device name in Firestore", err);
+        console.warn("Firestore rename notice:", err);
       }
     }
     setNotice({ text: `Device renamed to "${trimmed}"`, type: "success" });
   };
 
-  // 6. Join Channel
-  const handleJoinChannel = async (targetCode?: string) => {
+  // Join Channel Handler
+  const handleJoinChannel = (targetCode?: string) => {
     const raw = targetCode || channelInput;
     const code = raw.trim().toUpperCase();
     if (!code) {
@@ -506,7 +644,6 @@ export default function Home() {
       return;
     }
 
-    // Delete device from current channel in Firestore
     if (db) {
       deleteDoc(doc(db, "channels", channelCode, "devices", deviceId)).catch(() => {});
     }
@@ -514,12 +651,12 @@ export default function Home() {
     setChannelCode(code);
     localStorage.setItem(STORAGE_CHANNEL_CODE, code);
     setChannelInput("");
-    setConnectedPeerIds([]);
-    setStatus("WAITING_FOR_DEVICE");
-    setNotice({ text: `Joined channel ${code}! Connecting devices...`, type: "success" });
+    setRemoteMembers(new Map());
+    setPeerStates(new Map());
+    setNotice({ text: `Joined channel ${code}! Discovering devices...`, type: "success" });
   };
 
-  // 7. Send Text Note
+  // Send Text Note via TransferManager
   const handleSendText = async () => {
     const text = textMessage.trim();
     if (!text) {
@@ -527,154 +664,64 @@ export default function Home() {
       return;
     }
 
-    const recipientDevice = devices.find((d) => d.id === recipient);
+    const recipientDevice = otherDevices.find((d) => d.id === recipient);
     const targetRecipientName = recipient === "all" ? "All Devices" : recipientDevice?.name || "Peer";
 
-    let sentP2P = false;
-    if (webrtcRef.current && webrtcRef.current.getConnectedPeerCount() > 0) {
-      sentP2P = webrtcRef.current.sendText(text, deviceName, recipient === "all" ? undefined : recipient);
+    if (!transferManagerRef.current) return;
+
+    setTransferStatusText("Sending note...");
+    const result = await transferManagerRef.current.sendText(recipient, targetRecipientName, text);
+
+    if (result.success) {
+      appendTransfer(result.transfer);
+      setTextMessage("");
+      setTransferStatusText("");
+      setNotice({
+        text: result.method === "p2p" ? "💬 Note sent directly via WebRTC P2P!" : "☁️ Note sent via Cloud Relay!",
+        type: "success",
+      });
     }
-
-    // Fallback: write text to Firestore transfers collection
-    if (!sentP2P && db && currentUser) {
-      try {
-        await addDoc(collection(db, "channels", channelCode, "transfers"), {
-          senderDeviceId: deviceId,
-          recipientDeviceId: recipient,
-          senderUid: currentUser.uid,
-          senderName: deviceName,
-          recipientName: targetRecipientName,
-          filename: text.length > 30 ? text.slice(0, 30) + "…" : "Text note",
-          mimeType: "text/plain",
-          size: text.length,
-          textContent: text,
-          createdAt: serverTimestamp(),
-        });
-      } catch (err) {
-        console.warn("Firestore text transfer send error:", err);
-      }
-    }
-
-    const localTransfer: Transfer = {
-      id: "txt_" + Math.random().toString(36).substring(2, 10),
-      userId: deviceId,
-      accountId: channelCode,
-      senderDeviceId: deviceId,
-      recipientDeviceId: recipient,
-      senderName: deviceName,
-      recipientName: targetRecipientName,
-      filename: text.length > 30 ? text.slice(0, 30) + "…" : "Text note",
-      mimeType: "text/plain",
-      size: text.length,
-      textContent: text,
-      status: "completed",
-      method: sentP2P ? "p2p" : "storage",
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 86400000).toISOString(),
-    };
-
-    appendTransfer(localTransfer);
-    setTextMessage("");
-    setNotice({
-      text: sentP2P ? "Text sent directly via WebRTC P2P!" : "Text sent via Cloud Transfer!",
-      type: "success",
-    });
   };
 
-  // 8. Send File
+  // Send File via TransferManager
   const handleSendFile = async () => {
     if (!selectedFile) {
       setNotice({ text: "Please select or drop a file to send.", type: "warning" });
       return;
     }
 
-    const recipientDevice = devices.find((d) => d.id === recipient);
+    const recipientDevice = otherDevices.find((d) => d.id === recipient);
     const targetRecipientName = recipient === "all" ? "All Devices" : recipientDevice?.name || "Peer";
+
+    if (!transferManagerRef.current) return;
 
     setTransferStatusText("Preparing file for transfer...");
     setTransferProgress(0);
 
-    let sentP2P = false;
-    if (webrtcRef.current && webrtcRef.current.getConnectedPeerCount() > 0) {
-      try {
-        sentP2P = await webrtcRef.current.sendFile(
-          selectedFile,
-          deviceName,
-          recipient === "all" ? undefined : recipient,
-          (percent) => {
-            setTransferProgress(percent);
-            setTransferStatusText(`Sending "${selectedFile.name}" (${percent}%)...`);
-          }
-        );
-      } catch (err) {
-        console.warn("WebRTC send file error, falling back to Storage:", err);
+    const result = await transferManagerRef.current.sendFile(
+      recipient,
+      targetRecipientName,
+      selectedFile,
+      (percent) => {
+        setTransferProgress(percent);
+        setTransferStatusText(`Transferring "${selectedFile.name}" (${percent}%)...`);
       }
+    );
+
+    if (result.success) {
+      appendTransfer(result.transfer);
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      setTransferProgress(null);
+      setTransferStatusText("");
+      setNotice({
+        text: result.method === "p2p" ? `📁 "${selectedFile.name}" sent via WebRTC P2P!` : `☁️ "${selectedFile.name}" uploaded to Cloud Relay!`,
+        type: "success",
+      });
     }
-
-    // Fallback: upload file to Firebase Storage & register in Firestore
-    let downloadUrl = "";
-    if (!sentP2P && storage && db && currentUser) {
-      setTransferStatusText("Uploading to Cloud Storage...");
-      try {
-        const transferId = "tr_" + Math.random().toString(36).substring(2, 10);
-        const cleanName = selectedFile.name.replace(/[^a-zA-Z0-9._ -]/g, "_");
-        const filePath = `channels/${channelCode}/transfers/${transferId}/${cleanName}`;
-        const fileStorageRef = storageRef(storage, filePath);
-
-        await uploadBytes(fileStorageRef, selectedFile, {
-          contentType: selectedFile.type || "application/octet-stream",
-        });
-
-        downloadUrl = await getDownloadURL(fileStorageRef);
-
-        await addDoc(collection(db, "channels", channelCode, "transfers"), {
-          senderDeviceId: deviceId,
-          recipientDeviceId: recipient,
-          senderUid: currentUser.uid,
-          senderName: deviceName,
-          recipientName: targetRecipientName,
-          filename: selectedFile.name,
-          mimeType: selectedFile.type || "application/octet-stream",
-          size: selectedFile.size,
-          storagePath: filePath,
-          downloadUrl,
-          createdAt: serverTimestamp(),
-        });
-      } catch (err) {
-        console.error("Storage upload error:", err);
-      }
-    }
-
-    const localTransfer: Transfer = {
-      id: "file_" + Math.random().toString(36).substring(2, 10),
-      userId: deviceId,
-      accountId: channelCode,
-      senderDeviceId: deviceId,
-      recipientDeviceId: recipient,
-      senderName: deviceName,
-      recipientName: targetRecipientName,
-      filename: selectedFile.name,
-      mimeType: selectedFile.type || "application/octet-stream",
-      size: selectedFile.size,
-      downloadUrl: downloadUrl || URL.createObjectURL(selectedFile),
-      status: "completed",
-      method: sentP2P ? "p2p" : "storage",
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 86400000).toISOString(),
-    };
-
-    appendTransfer(localTransfer);
-    setSelectedFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-    setTransferProgress(null);
-    setTransferStatusText("");
-    setNotice({
-      text: sentP2P ? `"${selectedFile.name}" sent via WebRTC P2P!` : `"${selectedFile.name}" uploaded to Cloud!`,
-      type: "success",
-    });
   };
 
-  // Download / Copy actions
+  // Action Helpers
   const handleTransferAction = async (transfer: Transfer) => {
     if (transfer.textContent) {
       try {
@@ -704,7 +751,7 @@ export default function Home() {
     if (typeof window === "undefined") return;
     const url = `${window.location.origin}${window.location.pathname}?channel=${channelCode}`;
     navigator.clipboard.writeText(url);
-    setNotice({ text: "Channel invite link copied! Open on any device to connect.", type: "success" });
+    setNotice({ text: "Channel invite link copied! Open on other devices to connect.", type: "success" });
   };
 
   const copyChannelCode = () => {
@@ -725,7 +772,6 @@ export default function Home() {
     localStorage.setItem(STORAGE_TRANSFERS, JSON.stringify(updated));
   };
 
-  // Drag & drop
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -741,9 +787,6 @@ export default function Home() {
     }
   };
 
-  const otherDevices = devices.filter((d) => d.id !== deviceId);
-  const platformInfo = getDevicePlatform();
-
   return (
     <main className={styles.container}>
       <div className={styles.shell}>
@@ -753,19 +796,21 @@ export default function Home() {
             <div className={styles.logoIcon}>⚡</div>
             <div>
               <h1 className={styles.brandTitle}>SlideDrop</h1>
-              <p className={styles.brandSubtitle}>Direct cross-device file & text transfer</p>
+              <p className={styles.brandSubtitle}>Direct P2P & Cloud Cross-Device Transfer</p>
             </div>
           </div>
 
           <div className={styles.headerActions}>
             <div
               className={`${styles.statusBadge} ${
-                status === "PEER_CONNECTED"
+                currentStatus === "PEER_CONNECTED"
                   ? styles.statusP2P
-                  : status === "WAITING_FOR_DEVICE"
-                  ? styles.statusWaiting
-                  : status === "CONNECTING_PEER" || status === "AUTHENTICATING"
+                  : currentStatus === "TRANSFERRING"
                   ? styles.statusConnecting
+                  : currentStatus === "DEVICE_DISCOVERED" || currentStatus === "CONNECTING_PEER"
+                  ? styles.statusConnecting
+                  : currentStatus === "WAITING_FOR_DEVICE"
+                  ? styles.statusWaiting
                   : styles.statusDisconnected
               }`}
               onClick={() => setShowDiagnostics(true)}
@@ -773,15 +818,19 @@ export default function Home() {
               title="Click to view connection diagnostics"
             >
               <span className={styles.statusDot} />
-              {status === "PEER_CONNECTED"
-                ? `🟢 Peer Connected (${connectedPeerIds.length} P2P)`
-                : status === "CONNECTING_PEER"
-                ? "Connecting to peer…"
-                : status === "WAITING_FOR_DEVICE"
-                ? `Waiting for device (Channel: ${channelCode})`
-                : status === "AUTHENTICATING"
+              {currentStatus === "PEER_CONNECTED"
+                ? `🟢 P2P Connected (${connectedPeerIds.length} peer${connectedPeerIds.length > 1 ? "s" : ""})`
+                : currentStatus === "TRANSFERRING"
+                ? `⚡ Transferring (${transferProgress || 0}%)`
+                : currentStatus === "CONNECTING_PEER"
+                ? "Connecting P2P…"
+                : currentStatus === "DEVICE_DISCOVERED"
+                ? `🟢 Device Found (${otherDevices.length})`
+                : currentStatus === "WAITING_FOR_DEVICE"
+                ? `Waiting for device (${channelCode})`
+                : currentStatus === "AUTHENTICATING"
                 ? "Connecting Firebase…"
-                : "Firebase Offline"}
+                : "Firebase Notice"}
             </div>
 
             <button className={styles.secondaryBtn} onClick={copyShareLink}>
@@ -817,11 +866,11 @@ export default function Home() {
           </div>
         )}
 
-        {/* Device & Channel Toolbar */}
+        {/* Connected Devices & Channel Toolbar */}
         <section className={styles.deviceCard}>
           <div className={styles.deviceCardHeader}>
             <h2 className={styles.sectionTitle}>
-              <span>Connected Devices ({devices.length || 1})</span>
+              <span>Connected Devices ({allDevices.length})</span>
             </h2>
 
             <div className={styles.pairingBox}>
@@ -869,9 +918,12 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Remote Devices */}
+            {/* Remote Channel Members */}
             {otherDevices.map((remote) => {
-              const isP2P = connectedPeerIds.includes(remote.id);
+              const peerState = peerStates.get(remote.id);
+              const isP2P = peerState === "connected";
+              const isConnecting = peerState === "connecting";
+
               const icon =
                 remote.type === "mobile"
                   ? "📱"
@@ -886,6 +938,7 @@ export default function Home() {
                   key={remote.id}
                   className={`${styles.deviceItem} ${recipient === remote.id ? styles.deviceItemActive : ""}`}
                   onClick={() => setRecipient(remote.id)}
+                  title={`Click to send directly to ${remote.name}`}
                 >
                   <div className={styles.deviceItemContent}>
                     <div className={styles.deviceIcon}>{icon}</div>
@@ -893,7 +946,7 @@ export default function Home() {
                       <p className={styles.deviceName}>{remote.name}</p>
                       <p className={styles.deviceSub}>
                         <span className={styles.onlineIndicator} />
-                        {isP2P ? "🟢 WebRTC P2P Ready" : "Ready to receive"}
+                        {isP2P ? "🟢 P2P Direct" : isConnecting ? "🟡 Connecting P2P" : "🟢 Online (Relay)"}
                       </p>
                     </div>
                   </div>
@@ -902,7 +955,7 @@ export default function Home() {
             })}
           </div>
 
-          {/* Device Rename Controls */}
+          {/* Device Controls */}
           <div className={styles.deviceControls}>
             <div className={styles.nameSettingGroup}>
               {isEditingName ? (
@@ -962,12 +1015,14 @@ export default function Home() {
               <span>📤 Send to Devices</span>
             </h2>
 
-            {/* Recipient Selector */}
+            {/* Recipient Selector (Unified Authoritative Source) */}
             <div className={styles.fieldGroup}>
               <label className={styles.fieldLabel}>
                 <span>Send To</span>
                 <span className={styles.fieldHint}>
-                  {recipient === "all" ? "Broadcasting to channel" : "Direct to selected peer"}
+                  {recipient === "all"
+                    ? `Broadcasting to channel (${otherDevices.length} recipient${otherDevices.length === 1 ? "" : "s"})`
+                    : "Direct to selected device"}
                 </span>
               </label>
               <select
@@ -976,15 +1031,18 @@ export default function Home() {
                 onChange={(e) => setRecipient(e.target.value)}
               >
                 <option value="all">📢 All Devices in Channel ({otherDevices.length})</option>
-                {otherDevices.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} ({d.type}) {connectedPeerIds.includes(d.id) ? "⚡ P2P" : ""}
-                  </option>
-                ))}
+                {otherDevices.map((d) => {
+                  const isP2P = peerStates.get(d.id) === "connected";
+                  return (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({d.type}) {isP2P ? "⚡ P2P Direct" : "☁️ Cloud Relay"}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
-            {/* Text Note Transfer */}
+            {/* Quick Note Transfer */}
             <div className={styles.fieldGroup}>
               <label className={styles.fieldLabel}>
                 <span>Quick Note / Text</span>
@@ -1048,8 +1106,9 @@ export default function Home() {
                     </div>
                   </div>
                   <button
-                    className={styles.fileRemoveBtn}
-                    onClick={() => {
+                    className={styles.removeFileBtn}
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setSelectedFile(null);
                       if (fileInputRef.current) fileInputRef.current.value = "";
                     }}
@@ -1060,103 +1119,106 @@ export default function Home() {
               )}
 
               {transferProgress !== null && (
-                <div>
-                  <p style={{ fontSize: "12px", color: "#2563eb", fontWeight: 600, marginTop: "6px" }}>
-                    {transferStatusText}
-                  </p>
-                  <div className={styles.progressBarContainer}>
+                <div className={styles.progressContainer}>
+                  <div className={styles.progressBarBg}>
                     <div className={styles.progressBarFill} style={{ width: `${transferProgress}%` }} />
                   </div>
+                  <span className={styles.progressText}>{transferStatusText}</span>
                 </div>
               )}
 
               <button
                 className={`${styles.primaryBtn} ${styles.sendBtn}`}
-                disabled={!selectedFile || transferProgress !== null}
+                disabled={!selectedFile || (transferProgress !== null && transferProgress > 0 && transferProgress < 100)}
                 onClick={handleSendFile}
               >
-                {transferProgress !== null ? "Transferring…" : "🚀 Upload & Send File"}
+                🚀 Send File
               </button>
             </div>
           </section>
 
           {/* Transfer History Panel */}
           <section className={styles.panel}>
-            <div className={styles.panelTitle}>
-              <span>📥 Transfer History</span>
+            <div className={styles.panelHeader}>
+              <h2 className={styles.panelTitle}>
+                <span>📥 Transfer History ({transfers.length})</span>
+              </h2>
               {transfers.length > 0 && (
-                <button
-                  className={styles.secondaryBtn}
-                  style={{ fontSize: "11.5px", padding: "4px 8px" }}
-                  onClick={clearHistory}
-                >
+                <button className={styles.clearBtn} onClick={clearHistory}>
                   Clear All
                 </button>
               )}
             </div>
 
             {transfers.length === 0 ? (
-              <div className={styles.historyEmpty}>
-                <div className={styles.historyEmptyIcon}>📬</div>
-                <p style={{ fontWeight: 600, color: "#475569" }}>No transfers yet</p>
-                <p style={{ fontSize: "13px" }}>
-                  Sent and received files or text notes will appear here automatically.
+              <div className={styles.emptyState}>
+                <div className={styles.emptyIcon}>📭</div>
+                <p className={styles.emptyTitle}>No transfers yet</p>
+                <p className={styles.emptySubtitle}>
+                  Sent and received files, links, and text notes will appear here in real-time.
                 </p>
               </div>
             ) : (
-              <div className={styles.historyList}>
+              <div className={styles.transferList}>
                 {transfers.map((item) => {
+                  const isSentByMe = item.senderDeviceId === deviceId;
                   const isText = Boolean(item.textContent);
+
                   return (
                     <div
                       key={item.id}
-                      className={styles.historyItem}
+                      className={styles.transferItem}
                       onClick={() => handleTransferAction(item)}
-                      style={{ cursor: "pointer" }}
+                      title={isText ? "Click to copy text note" : "Click to download file"}
                     >
-                      <div className={styles.historyLeft}>
-                        <div
-                          className={`${styles.historyTypeIcon} ${
-                            isText ? styles.historyIconText : styles.historyIconFile
-                          }`}
-                        >
-                          {isText ? "💬" : "📄"}
+                      <div className={styles.transferIcon}>{isText ? "💬" : "📄"}</div>
+                      <div className={styles.transferDetails}>
+                        <div className={styles.transferHeader}>
+                          <p className={styles.transferFilename}>{item.filename}</p>
+                          <span
+                            className={`${styles.methodBadge} ${
+                              item.method === "p2p" ? styles.methodP2P : styles.methodStorage
+                            }`}
+                          >
+                            {item.method === "p2p" ? "⚡ P2P Direct" : "☁️ Cloud Relay"}
+                          </span>
                         </div>
-                        <div className={styles.historyDetails}>
-                          <p className={styles.historyTitle}>{item.filename}</p>
-                          <p className={styles.historySub}>
-                            <span>{item.senderName}</span>
-                            <span>→</span>
-                            <span>{item.recipientName}</span>
-                            <span>•</span>
-                            <span>{formatBytes(item.size)}</span>
-                            <span>•</span>
-                            <span>{formatTime(item.createdAt)}</span>
-                            {item.method === "p2p" && <span style={{ color: "#10b981", fontWeight: 700 }}>• P2P</span>}
+
+                        {item.textContent && (
+                          <p className={styles.transferSnippet}>
+                            {item.textContent.length > 90
+                              ? item.textContent.slice(0, 90) + "…"
+                              : item.textContent}
                           </p>
+                        )}
+
+                        <div className={styles.transferMeta}>
+                          <span>
+                            {isSentByMe ? `To: ${item.recipientName}` : `From: ${item.senderName}`}
+                          </span>
+                          <span>•</span>
+                          <span>{formatBytes(item.size)}</span>
+                          <span>•</span>
+                          <span>{formatTime(item.createdAt)}</span>
                         </div>
                       </div>
 
-                      <div className={styles.historyActions}>
+                      <div className={styles.transferActions}>
                         <button
-                          className={`${styles.actionBtn} ${styles.actionBtnPrimary}`}
+                          className={styles.actionBtn}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleTransferAction(item);
                           }}
                         >
-                          {isText
-                            ? copiedId === item.id
-                              ? "✓ Copied"
-                              : "📋 Copy"
-                            : "⬇️ Download"}
+                          {copiedId === item.id ? "✓ Copied" : isText ? "📋 Copy" : "⬇️ Download"}
                         </button>
                         <button
                           className={styles.deleteBtn}
-                          title="Delete transfer"
                           onClick={(e) => deleteTransfer(item.id, e)}
+                          title="Delete"
                         >
-                          🗑️
+                          ✕
                         </button>
                       </div>
                     </div>
@@ -1167,64 +1229,41 @@ export default function Home() {
           </section>
         </div>
 
-        {/* Diagnostics & Connection Modal */}
+        {/* Connection Diagnostics Modal */}
         {showDiagnostics && (
-          <div className={styles.modalBackdrop} onClick={() => setShowDiagnostics(false)}>
+          <div className={styles.modalOverlay} onClick={() => setShowDiagnostics(false)}>
             <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
               <div className={styles.modalHeader}>
-                <h3 className={styles.modalTitle}>Connection Diagnostics</h3>
-                <button className={styles.noticeClose} onClick={() => setShowDiagnostics(false)}>
+                <h3 className={styles.modalTitle}>⚡ SlideDrop Diagnostics</h3>
+                <button className={styles.modalCloseBtn} onClick={() => setShowDiagnostics(false)}>
                   ✕
                 </button>
               </div>
 
-              <div className={styles.modalContent}>
-                <p>
-                  <strong>Connection State:</strong>{" "}
-                  {status === "PEER_CONNECTED"
-                    ? "🟢 WebRTC P2P Direct Connected"
-                    : status === "CONNECTING_PEER"
-                    ? "🟡 Connecting & Negotiating WebRTC..."
-                    : status === "WAITING_FOR_DEVICE"
-                    ? "🔵 In Channel, waiting for second device"
-                    : status === "AUTHENTICATING"
-                    ? "🟡 Authenticating with Firebase..."
-                    : "🔴 Firebase Error"}
-                </p>
-                <p>
-                  <strong>Channel Code:</strong> <code>{channelCode}</code>
-                </p>
-                <p>
-                  <strong>Firebase UID:</strong> <code>{currentUser?.uid || "Anonymous (connecting...)"}</code>
-                </p>
-                <p>
-                  <strong>Local Device ID:</strong> <code>{deviceId}</code>
-                </p>
-                <p>
-                  <strong>Connected Peers:</strong> <code>{connectedPeerIds.join(", ") || "None"}</code>
-                </p>
-                <p>
-                  <strong>Discovered Channel Devices:</strong> <code>{devices.length}</code>
-                </p>
-
-                <div className={styles.codeSnippet}>
-                  {status === "PEER_CONNECTED"
-                    ? "Direct WebRTC DataChannel is open! File and text transfers stream P2P across any network."
-                    : "Devices in channel YYXJ8C discover each other through Firebase Firestore. When a peer joins, WebRTC negotiates a direct connection."}
+              <div className={styles.diagnosticsContent}>
+                <div className={styles.diagRow}>
+                  <span>Channel Code:</span>
+                  <strong>{channelCode}</strong>
                 </div>
-
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "8px" }}>
-                  <button
-                    className={styles.secondaryBtn}
-                    onClick={() => {
-                      window.location.reload();
-                    }}
-                  >
-                    🔄 Reload
-                  </button>
-                  <button className={styles.primaryBtn} onClick={() => setShowDiagnostics(false)}>
-                    Done
-                  </button>
+                <div className={styles.diagRow}>
+                  <span>Local Device:</span>
+                  <strong>{deviceName} (<code>{deviceId.slice(0, 8)}</code>)</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>Auth Status:</span>
+                  <strong>{currentUser ? `Authenticated (${currentUser.uid.slice(0, 8)})` : "Connecting..."}</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>Channel Members:</span>
+                  <strong>{allDevices.length} total ({otherDevices.length} remote)</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>Direct WebRTC Peers:</span>
+                  <strong>{connectedPeerIds.length} active</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>Active Architecture:</span>
+                  <strong>{connectedPeerIds.length > 0 ? "⚡ Architecture A (Direct P2P)" : "☁️ Architecture B (Cloud Relay)"}</strong>
                 </div>
               </div>
             </div>
