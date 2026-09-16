@@ -9,6 +9,40 @@ import {
   where,
   Unsubscribe,
 } from "firebase/firestore";
+import {
+  Laptop,
+  Monitor,
+  Smartphone,
+  Tablet,
+  Globe,
+  FileText,
+  Image as ImageIcon,
+  Film,
+  FileArchive,
+  FileCode,
+  File as FileIcon,
+  Copy,
+  Check,
+  Share2,
+  Send,
+  Plus,
+  LogOut,
+  Trash2,
+  Download,
+  AlertCircle,
+  CheckCircle2,
+  Info,
+  X,
+  Edit3,
+  SlidersHorizontal,
+  ArrowRight,
+  Upload,
+  MessageSquare,
+  Zap,
+  Cloud,
+  Play,
+  FileQuestion,
+} from "lucide-react";
 import { auth, db, storage } from "@/lib/firebase";
 import { SignalingClient, getDefaultSignalingUrl } from "@/lib/signaling-client";
 import type { SignalingEvent } from "@/lib/signaling-client";
@@ -35,9 +69,41 @@ type AppConnectionStatus =
   | "OFFLINE"
   | "ERROR";
 
-function getDevicePlatform(): { type: "desktop" | "mobile" | "tablet" | "browser"; defaultName: string; icon: string } {
+// ==================================================
+// CUSTOM SLIDEDROP VECTOR LOGO MARK
+// Vibrant sliding transfer planes forming a sleek "S"
+// ==================================================
+function SlideDropLogo({ size = 36 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 36 36"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-label="SlideDrop Logo"
+    >
+      <rect width="36" height="36" rx="10" fill="#0D1117" stroke="rgba(255,159,28,0.3)" strokeWidth="1" />
+      {/* Top Sliding Plane (Rightward) */}
+      <path
+        d="M9 13.5C9 11.567 10.567 10 12.5 10H23C24.3807 10 25.5 11.1193 25.5 12.5C25.5 13.8807 24.3807 15 23 15H10.5C9.67157 15 9 14.3284 9 13.5Z"
+        fill="#FF9F1C"
+      />
+      <circle cx="27" cy="12.5" r="2.2" fill="#FFC857" />
+
+      {/* Bottom Sliding Plane (Leftward) */}
+      <path
+        d="M27 22.5C27 24.433 25.433 26 23.5 26H13C11.6193 26 10.5 24.8807 10.5 23.5C10.5 22.1193 11.6193 21 13 21H25.5C26.3284 21 27 21.6716 27 22.5Z"
+        fill="#FF6B35"
+      />
+      <circle cx="9" cy="23.5" r="2.2" fill="#FF9F1C" />
+    </svg>
+  );
+}
+
+function getDevicePlatform(): { type: "desktop" | "mobile" | "tablet" | "browser"; defaultName: string } {
   if (typeof navigator === "undefined") {
-    return { type: "desktop", defaultName: "Desktop", icon: "💻" };
+    return { type: "desktop", defaultName: "Desktop" };
   }
   const ua = navigator.userAgent;
   const isMobile = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
@@ -46,14 +112,69 @@ function getDevicePlatform(): { type: "desktop" | "mobile" | "tablet" | "browser
   const isWindows = /Windows NT/i.test(ua);
   const isLinux = /Linux/i.test(ua) && !isMobile;
 
-  if (isTablet) return { type: "tablet", defaultName: "iPad", icon: "📱" };
-  if (/iPhone/i.test(ua)) return { type: "mobile", defaultName: "iPhone", icon: "📱" };
-  if (/Android/i.test(ua)) return { type: "mobile", defaultName: "Android Phone", icon: "📱" };
-  if (isMac) return { type: "desktop", defaultName: "MacBook", icon: "💻" };
-  if (isWindows) return { type: "desktop", defaultName: "Windows PC", icon: "🖥️" };
-  if (isLinux) return { type: "desktop", defaultName: "Linux Desktop", icon: "🖥️" };
-  if (isMobile) return { type: "mobile", defaultName: "Mobile Device", icon: "📱" };
-  return { type: "desktop", defaultName: "Browser", icon: "🌐" };
+  if (isTablet) return { type: "tablet", defaultName: "iPad" };
+  if (/iPhone/i.test(ua)) return { type: "mobile", defaultName: "iPhone" };
+  if (/Android/i.test(ua)) return { type: "mobile", defaultName: "Android Phone" };
+  if (isMac) return { type: "desktop", defaultName: "MacBook" };
+  if (isWindows) return { type: "desktop", defaultName: "Windows PC" };
+  if (isLinux) return { type: "desktop", defaultName: "Linux Desktop" };
+  if (isMobile) return { type: "mobile", defaultName: "Mobile Device" };
+  return { type: "desktop", defaultName: "Browser" };
+}
+
+function getDeviceIcon(type: string, name = "") {
+  const lowerName = name.toLowerCase();
+  if (type === "mobile" || lowerName.includes("iphone") || lowerName.includes("phone") || lowerName.includes("android")) {
+    return <Smartphone size={24} strokeWidth={2} />;
+  }
+  if (type === "tablet" || lowerName.includes("ipad") || lowerName.includes("tablet")) {
+    return <Tablet size={24} strokeWidth={2} />;
+  }
+  if (lowerName.includes("macbook") || lowerName.includes("laptop")) {
+    return <Laptop size={24} strokeWidth={2} />;
+  }
+  if (type === "desktop" || lowerName.includes("pc") || lowerName.includes("desktop") || lowerName.includes("windows")) {
+    return <Monitor size={24} strokeWidth={2} />;
+  }
+  return <Globe size={24} strokeWidth={2} />;
+}
+
+function renderFileThumbnail(mimeType = "", filename = "", downloadUrl = "") {
+  const lower = filename.toLowerCase();
+  const isImage = mimeType.startsWith("image/") || /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(lower);
+  const isVideo = mimeType.startsWith("video/") || /\.(mp4|mov|webm|mkv|avi)$/i.test(lower);
+  const isPdf = mimeType.includes("pdf") || lower.endsWith(".pdf");
+  const isArchive = mimeType.includes("zip") || mimeType.includes("tar") || mimeType.includes("compressed") || /\.(zip|tar|gz|rar|7z)$/i.test(lower);
+  const isCode = mimeType.includes("json") || mimeType.includes("javascript") || mimeType.includes("typescript") || /\.(ts|js|jsx|tsx|html|css|py|json|md)$/i.test(lower);
+
+  if (isImage && downloadUrl) {
+    return <img src={downloadUrl} alt={filename} className={styles.transferThumbImg} />;
+  }
+  if (isImage) {
+    return <ImageIcon size={28} strokeWidth={2} />;
+  }
+  if (isVideo) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, color: "#FF9F1C" }}>
+        <Film size={26} strokeWidth={2} />
+      </div>
+    );
+  }
+  if (isPdf) {
+    return (
+      <div className={styles.pdfBadgeBox}>
+        <FileText size={24} strokeWidth={2} />
+        <span className={styles.pdfLabelPill}>PDF</span>
+      </div>
+    );
+  }
+  if (isArchive) {
+    return <FileArchive size={26} strokeWidth={2} style={{ color: "#FBBF24" }} />;
+  }
+  if (isCode) {
+    return <FileCode size={26} strokeWidth={2} style={{ color: "#38BDF8" }} />;
+  }
+  return <FileIcon size={26} strokeWidth={2} style={{ color: "#9AA4B2" }} />;
 }
 
 function generateRandomCode(): string {
@@ -113,7 +234,7 @@ function formatTime(timestamp: unknown): string {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  return date.toLocaleDateString();
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 const subscribeNoop = () => () => {};
@@ -175,10 +296,10 @@ function getInitialTransfers(): Transfer[] {
 }
 
 export default function Home() {
-  // 1. Hydration Mount Guard (Guarantees zero SSR mismatch)
+  // 1. Hydration Mount Guard
   const isMounted = useIsMounted();
 
-  // 2. Client-only Identity and Channel State (Lazily initialized)
+  // 2. Client Identity & Channel State
   const [deviceId] = useState<string>(getInitialDeviceId);
   const [deviceName, setDeviceName] = useState<string>(getInitialDeviceName);
   const [channelCode, setChannelCode] = useState<string>(getInitialChannelCode);
@@ -191,20 +312,26 @@ export default function Home() {
   const [remoteMembers, setRemoteMembers] = useState<Map<string, Device>>(new Map());
   const [peerStates, setPeerStates] = useState<Map<string, "connecting" | "connected" | "disconnected">>(new Map());
 
-  // 4. Firebase Auth State (For cloud fallback)
+  // 4. Firebase Auth State (Cloud fallback)
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
-  // 5. Transfer History & Composer States
+  // 5. Transfer History, Multi-File Selection & Composer States
   const [transfers, setTransfers] = useState<Transfer[]>(getInitialTransfers);
   const [recipient, setRecipient] = useState<string>("all");
+  const [composerMode, setComposerMode] = useState<"file" | "note">("file");
   const [textMessage, setTextMessage] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [filePreviews, setFilePreviews] = useState<Map<string, string>>(new Map());
   const [isDragging, setIsDragging] = useState(false);
   const [transferProgress, setTransferProgress] = useState<number | null>(null);
   const [transferStatusText, setTransferStatusText] = useState<string>("");
+  const [multiRecipientProgress, setMultiRecipientProgress] = useState<Map<string, { percent: number; status: string; method: string }>>(new Map());
+  const [recentReceived, setRecentReceived] = useState<Transfer | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [hasCopiedCode, setHasCopiedCode] = useState(false);
+  const [hasCopiedLink, setHasCopiedLink] = useState(false);
   const [notice, setNotice] = useState<{ text: string; type: "success" | "warning" | "info" } | null>(null);
   const [signalingEvents, setSignalingEvents] = useState<SignalingEvent[]>([]);
   const [signalingUrl, setSignalingUrl] = useState<string>(() => (typeof window !== "undefined" ? getDefaultSignalingUrl() : ""));
@@ -213,6 +340,22 @@ export default function Home() {
   const signalingRef = useRef<SignalingClient | null>(null);
   const webrtcRef = useRef<WebRTCManager | null>(null);
   const transferManagerRef = useRef<TransferManager | null>(null);
+
+  // Generate and manage local object URLs for multi-file previews
+  useEffect(() => {
+    const urls = new Map<string, string>();
+    selectedFiles.forEach((file) => {
+      if (file.type.startsWith("image/") || file.type.startsWith("video/")) {
+        const url = URL.createObjectURL(file);
+        urls.set(`${file.name}-${file.size}`, url);
+      }
+    });
+    setFilePreviews(urls);
+
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [selectedFiles]);
 
   // Append transfer helper
   const appendTransfer = useCallback((transfer: Transfer) => {
@@ -226,7 +369,7 @@ export default function Home() {
     });
   }, []);
 
-  // Firebase Anonymous Auth (for Architecture B cloud fallback)
+  // Firebase Anonymous Auth (Architecture B fallback)
   useEffect(() => {
     if (!auth) return;
 
@@ -251,14 +394,12 @@ export default function Home() {
     if (!isMounted || !deviceId || !channelCode) return;
 
     const platform = getDevicePlatform();
-
-    // 1. Instantiate WebRTC Manager
     let webrtc: WebRTCManager | null = null;
 
     const webrtcCallbacks = {
       onPeerConnected: (peerId: string) => {
         setPeerStates((prev) => new Map(prev).set(peerId, "connected"));
-        setNotice({ text: "🟢 Direct WebRTC P2P DataChannel established!", type: "success" });
+        setNotice({ text: "Direct WebRTC P2P connection established.", type: "success" });
       },
       onPeerDisconnected: (peerId: string) => {
         setPeerStates((prev) => {
@@ -279,7 +420,7 @@ export default function Home() {
           recipientDeviceId: deviceId,
           senderName: msg.senderName,
           recipientName: deviceName,
-          filename: msg.text.length > 30 ? msg.text.slice(0, 30) + "…" : "Text note",
+          filename: msg.text.length > 40 ? msg.text.slice(0, 40) + "…" : "Text note",
           mimeType: "text/plain",
           size: msg.text.length,
           textContent: msg.text,
@@ -289,7 +430,8 @@ export default function Home() {
           expiresAt: new Date(msg.timestamp + 86400000).toISOString(),
         };
         appendTransfer(transfer);
-        setNotice({ text: `💬 Received note from ${msg.senderName}`, type: "success" });
+        setRecentReceived(transfer);
+        setNotice({ text: `Received note from ${msg.senderName}`, type: "success" });
       },
       onFileProgress: (transferId: string, percent: number, direction: "send" | "receive") => {
         setTransferProgress(percent);
@@ -328,14 +470,14 @@ export default function Home() {
           expiresAt: new Date(fileTransfer.timestamp + 86400000).toISOString(),
         };
         appendTransfer(transfer);
-        setNotice({ text: `📁 Received "${fileTransfer.filename}" from ${fileTransfer.senderName}!`, type: "success" });
+        setRecentReceived(transfer);
+        setNotice({ text: `Received "${fileTransfer.filename}" from ${fileTransfer.senderName}`, type: "success" });
       },
       onTransferAcknowledged: (transferId: string) => {
         console.log(`[WebRTC] Transfer ${transferId} acknowledged by recipient.`);
       },
     };
 
-    // 2. Instantiate Signaling Client
     const signaling = new SignalingClient({
       onConnected: () => {
         setIsWsConnected(true);
@@ -396,10 +538,8 @@ export default function Home() {
     signalingRef.current = signaling;
     webrtcRef.current = webrtc;
 
-    // Connect to WebSocket signaling server
     signaling.connect(channelCode, deviceId, deviceName, platform.type);
 
-    // Initialize TransferManager (Dual Architectures A & B)
     transferManagerRef.current = new TransferManager(
       webrtc,
       db,
@@ -419,14 +559,14 @@ export default function Home() {
     };
   }, [isMounted, deviceId, deviceName, channelCode, currentUser, appendTransfer]);
 
-  // Synchronize WebRTC Peer connections whenever remote members change
+  // Synchronize WebRTC Peer connections
   useEffect(() => {
     if (!webrtcRef.current) return;
     const remoteIds = Array.from(remoteMembers.keys()).filter((id) => id !== deviceId);
     webrtcRef.current.syncPeers(remoteIds);
   }, [remoteMembers, deviceId]);
 
-  // Firestore Fallback Transfers Listener (Architecture B - 24h Expiry)
+  // Firestore Fallback Transfers Listener (Architecture B)
   useEffect(() => {
     if (!db || !currentUser || !channelCode || !deviceId) return;
 
@@ -459,8 +599,9 @@ export default function Home() {
                 expiresAt: new Date(Date.now() + 86400000).toISOString(),
               };
               appendTransfer(transfer);
+              setRecentReceived(transfer);
               setNotice({
-                text: `☁️ Received ${data.textContent ? "note" : `"${data.filename}"`} from ${data.senderName} via Cloud Relay!`,
+                text: `Received ${data.textContent ? "note" : `"${data.filename}"`} from ${data.senderName} via Secure Relay`,
                 type: "success",
               });
             }
@@ -476,7 +617,6 @@ export default function Home() {
     };
   }, [currentUser, channelCode, deviceId, deviceName, appendTransfer]);
 
-  // Derived Channel Members & Recipient List (Authoritative)
   const platformInfo = useMemo(() => getDevicePlatform(), []);
 
   const selfDevice = useMemo<Device>(() => ({
@@ -508,7 +648,6 @@ export default function Home() {
     return list;
   }, [peerStates]);
 
-  // Explicit Overall Connection State
   const currentStatus: AppConnectionStatus = useMemo(() => {
     if (!isWsConnected) return "CONNECTING_TO_SERVER";
     if (transferProgress !== null && transferProgress > 0 && transferProgress < 100) return "TRANSFERRING";
@@ -552,7 +691,6 @@ export default function Home() {
       return;
     }
 
-    // Close existing peers & switch
     webrtcRef.current?.closeAllPeers();
     setRemoteMembers(new Map());
     setPeerStates(new Map());
@@ -563,10 +701,10 @@ export default function Home() {
     if (signalingRef.current) {
       signalingRef.current.switchChannel(code);
     }
-    setNotice({ text: `Joined channel ${code}! Discovering devices...`, type: "success" });
+    setNotice({ text: `Joined channel ${code}. Discovering devices...`, type: "success" });
   };
 
-  // New Channel Handler (Generates fresh room code)
+  // New Channel Handler
   const handleNewChannel = () => {
     const freshCode = generateRandomCode();
     webrtcRef.current?.closeAllPeers();
@@ -590,14 +728,14 @@ export default function Home() {
     if (signalingRef.current) {
       signalingRef.current.leaveChannel();
     }
-    setNotice({ text: "Left channel. Enter or create a new channel code to connect.", type: "info" });
+    setNotice({ text: "Left channel. Enter or create a channel code to connect.", type: "info" });
   };
 
-  // Send Text Note via TransferManager
+  // Send Text Note
   const handleSendText = async () => {
     const text = textMessage.trim();
     if (!text) {
-      setNotice({ text: "Please enter a message to send.", type: "warning" });
+      setNotice({ text: "Please enter a message or note to send.", type: "warning" });
       return;
     }
 
@@ -622,7 +760,7 @@ export default function Home() {
       if (successCount > 0) {
         setTextMessage("");
         setTransferStatusText("");
-        setNotice({ text: `Text sent to ${successCount} devices!`, type: "success" });
+        setNotice({ text: `Note delivered to ${successCount} device${successCount > 1 ? "s" : ""}.`, type: "success" });
       }
       return;
     }
@@ -638,84 +776,94 @@ export default function Home() {
       setTextMessage("");
       setTransferStatusText("");
       setNotice({
-        text: result.method === "p2p" ? "Text sent via WebRTC P2P!" : "Text sent via Cloud Relay!",
+        text: result.method === "p2p" ? "Note delivered via P2P Direct." : "Note delivered via Secure Relay.",
         type: "success",
       });
     }
   };
 
-  // Send File via TransferManager
-  const handleSendFile = async () => {
-    if (!selectedFile) {
-      setNotice({ text: "Please select or drop a file to send.", type: "warning" });
+  // Send Selected Files
+  const handleSendFiles = async () => {
+    if (selectedFiles.length === 0) {
+      setNotice({ text: "Please select or drop files to send.", type: "warning" });
       return;
     }
+
+    if (!transferManagerRef.current) return;
 
     const recipientDevice = otherDevices.find((d) => d.id === recipient);
     const targetRecipientName = recipient === "all" ? "All Devices" : recipientDevice?.name || "Peer";
 
-    if (!transferManagerRef.current) return;
-
-    setTransferStatusText("Preparing file for transfer...");
+    setTransferStatusText("Preparing files for transfer...");
     setTransferProgress(0);
 
-    if (recipient === "all") {
-      const promises = otherDevices.map((d) =>
-        transferManagerRef.current!.sendFile(d.id, d.name, selectedFile, (percent) => {
-          // Progress can be noisy for multiple, maybe just update global or last
-          setTransferProgress(percent);
-          setTransferStatusText(`Transferring to ${d.name} (${percent}%)...`);
-        })
-      );
-      const results = await Promise.all(promises);
-      let successCount = 0;
-      results.forEach((r) => {
-        if (r.success) {
-          appendTransfer(r.transfer);
-          successCount++;
-        }
-      });
+    const filesToSend = [...selectedFiles];
+    let totalSuccess = 0;
 
-      if (successCount > 0) {
-        setSelectedFile(null);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        setTransferProgress(null);
-        setTransferStatusText("");
-        setNotice({ text: `📁 "${selectedFile.name}" sent to ${successCount} devices!`, type: "success" });
+    if (recipient === "all") {
+      for (let i = 0; i < filesToSend.length; i++) {
+        const file = filesToSend[i];
+        setTransferStatusText(`Sending ${file.name} (${i + 1}/${filesToSend.length})...`);
+
+        const promises = otherDevices.map((d) => {
+          const isP2P = peerStates.get(d.id) === "connected";
+          return transferManagerRef.current!.sendFile(d.id, d.name, file, (percent) => {
+            setMultiRecipientProgress((prev) => {
+              const next = new Map(prev);
+              next.set(d.id, { percent, status: `${percent}%`, method: isP2P ? "P2P Direct" : "Secure Relay" });
+              return next;
+            });
+            setTransferProgress(percent);
+          });
+        });
+
+        const results = await Promise.all(promises);
+        results.forEach((r) => {
+          if (r.success) {
+            appendTransfer(r.transfer);
+            totalSuccess++;
+          }
+        });
       }
-      return;
+    } else {
+      for (let i = 0; i < filesToSend.length; i++) {
+        const file = filesToSend[i];
+        const result = await transferManagerRef.current.sendFile(
+          recipient,
+          targetRecipientName,
+          file,
+          (percent) => {
+            setTransferProgress(percent);
+            setTransferStatusText(`Transferring "${file.name}" (${percent}%)...`);
+          }
+        );
+        if (result.success) {
+          appendTransfer(result.transfer);
+          totalSuccess++;
+        }
+      }
     }
 
-    const result = await transferManagerRef.current.sendFile(
-      recipient,
-      targetRecipientName,
-      selectedFile,
-      (percent) => {
-        setTransferProgress(percent);
-        setTransferStatusText(`Transferring "${selectedFile.name}" (${percent}%)...`);
-      }
-    );
+    setSelectedFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setTransferProgress(null);
+    setTransferStatusText("");
+    setMultiRecipientProgress(new Map());
 
-    if (result.success) {
-      appendTransfer(result.transfer);
-      setSelectedFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      setTransferProgress(null);
-      setTransferStatusText("");
+    if (totalSuccess > 0) {
       setNotice({
-        text: result.method === "p2p" ? `📁 "${selectedFile.name}" sent via WebRTC P2P!` : `☁️ "${selectedFile.name}" uploaded to Cloud Relay!`,
+        text: `Successfully transferred ${filesToSend.length} file${filesToSend.length > 1 ? "s" : ""}!`,
         type: "success",
       });
     }
   };
 
-  // Action Helpers
   const handleTransferAction = async (transfer: Transfer) => {
     if (transfer.textContent) {
       try {
         await navigator.clipboard.writeText(transfer.textContent);
         setCopiedId(transfer.id);
-        setNotice({ text: "Text copied to clipboard!", type: "success" });
+        setNotice({ text: "Text copied to clipboard.", type: "success" });
         setTimeout(() => setCopiedId(null), 2000);
       } catch {
         setNotice({ text: transfer.textContent, type: "info" });
@@ -739,12 +887,16 @@ export default function Home() {
     if (typeof window === "undefined") return;
     const url = `${window.location.origin}${window.location.pathname}?channel=${channelCode}`;
     navigator.clipboard.writeText(url);
-    setNotice({ text: "Channel invite link copied! Open on other devices to connect.", type: "success" });
+    setHasCopiedLink(true);
+    setNotice({ text: "Invite link copied to clipboard.", type: "success" });
+    setTimeout(() => setHasCopiedLink(false), 2000);
   };
 
   const copyChannelCode = () => {
     navigator.clipboard.writeText(channelCode);
-    setNotice({ text: `Channel code ${channelCode} copied!`, type: "success" });
+    setHasCopiedCode(true);
+    setNotice({ text: `Channel code ${channelCode} copied.`, type: "success" });
+    setTimeout(() => setHasCopiedCode(false), 2000);
   };
 
   const clearHistory = () => {
@@ -760,6 +912,10 @@ export default function Home() {
     localStorage.setItem(STORAGE_TRANSFERS, JSON.stringify(updated));
   };
 
+  const removeSelectedFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -770,94 +926,102 @@ export default function Home() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setSelectedFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const newFiles = Array.from(e.dataTransfer.files);
+      setSelectedFiles((prev) => [...prev, ...newFiles]);
     }
   };
 
-  // Prevent SSR Hydration mismatch: return clean skeleton if not mounted yet
+  const totalSelectedSize = useMemo(() => {
+    return selectedFiles.reduce((acc, f) => acc + f.size, 0);
+  }, [selectedFiles]);
+
   if (!isMounted) {
     return (
-      <main className={styles.container}>
+      <div className={styles.pageContainer}>
         <div className={styles.shell}>
           <header className={styles.header}>
             <div className={styles.brand}>
-              <div className={styles.logoIcon}>⚡</div>
-              <div>
-                <h1 className={styles.brandTitle}>SlideDrop</h1>
-                <p className={styles.brandSubtitle}>Direct P2P & Cloud Cross-Device Transfer</p>
-              </div>
-            </div>
-            <div className={styles.headerActions}>
-              <div className={`${styles.statusBadge} ${styles.statusConnecting}`}>
-                <span className={styles.statusDot} />
-                Connecting...
+              <SlideDropLogo size={36} />
+              <div className={styles.brandText}>
+                <span className={styles.brandTitle}>SlideDrop</span>
+                <span className={styles.brandSubtitle}>Share Instantly. Anywhere.</span>
               </div>
             </div>
           </header>
         </div>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className={styles.container}>
+    <div className={styles.pageContainer}>
       <div className={styles.shell}>
-        {/* Header */}
+        {/* ==================================================
+            1. TOP FLOATING HEADER
+            ================================================== */}
         <header className={styles.header}>
           <div className={styles.brand}>
-            <div className={styles.logoIcon}>⚡</div>
-            <div>
-              <h1 className={styles.brandTitle}>SlideDrop</h1>
-              <p className={styles.brandSubtitle}>Direct P2P & Cloud Cross-Device Transfer</p>
+            <SlideDropLogo size={36} />
+            <div className={styles.brandText}>
+              <span className={styles.brandTitle}>SlideDrop</span>
+              <span className={styles.brandSubtitle}>Share Instantly. Anywhere.</span>
             </div>
           </div>
 
           <div className={styles.headerActions}>
-            <div
-              className={`${styles.statusBadge} ${
-                currentStatus === "P2P_CONNECTED"
-                  ? styles.statusP2P
-                  : currentStatus === "TRANSFERRING"
-                  ? styles.statusConnecting
-                  : currentStatus === "DEVICE_DISCOVERED" || currentStatus === "CONNECTING_PEER"
-                  ? styles.statusConnecting
-                  : currentStatus === "CHANNEL_JOINED"
-                  ? styles.statusWaiting
-                  : styles.statusDisconnected
-              }`}
+            <button
+              className={styles.statusPill}
               onClick={() => setShowDiagnostics(true)}
-              style={{ cursor: "pointer" }}
-              title="Click to view connection diagnostics"
+              title="Connection status - click for settings & telemetry"
+              aria-label="Connection diagnostics and settings"
             >
-              <span className={styles.statusDot} />
-              {currentStatus === "P2P_CONNECTED"
-                ? `🟢 P2P Connected (${connectedPeerIds.length} peer${connectedPeerIds.length > 1 ? "s" : ""})`
-                : currentStatus === "TRANSFERRING"
-                ? `⚡ Transferring (${transferProgress || 0}%)`
-                : currentStatus === "CONNECTING_PEER"
-                ? "Connecting P2P…"
-                : currentStatus === "DEVICE_DISCOVERED"
-                ? `🟢 Device Found (${otherDevices.length})`
-                : currentStatus === "CHANNEL_JOINED"
-                ? `Waiting for device (${channelCode})`
-                : currentStatus === "CONNECTING_TO_SERVER"
-                ? "Connecting Server…"
-                : "Disconnected"}
-            </div>
+              <span
+                className={`${styles.statusDot} ${
+                  currentStatus === "P2P_CONNECTED"
+                    ? styles.statusDotOnline
+                    : currentStatus === "TRANSFERRING"
+                    ? styles.statusDotConnecting
+                    : currentStatus === "CHANNEL_JOINED" || currentStatus === "DEVICE_DISCOVERED"
+                    ? styles.statusDotOnline
+                    : styles.statusDotOffline
+                }`}
+              />
+              <span>
+                {currentStatus === "P2P_CONNECTED"
+                  ? `P2P Direct (${connectedPeerIds.length})`
+                  : currentStatus === "TRANSFERRING"
+                  ? `Transferring (${transferProgress || 0}%)`
+                  : currentStatus === "DEVICE_DISCOVERED"
+                  ? `${otherDevices.length} online`
+                  : currentStatus === "CHANNEL_JOINED"
+                  ? `Connected`
+                  : currentStatus === "CONNECTING_TO_SERVER"
+                  ? "Connecting..."
+                  : "Offline"}
+              </span>
+            </button>
 
-            <button className={styles.secondaryBtn} onClick={copyShareLink}>
-              🔗 Share Link
+            <button
+              className={styles.iconBtn}
+              onClick={() => setShowDiagnostics(true)}
+              title="Settings & Telemetry"
+              aria-label="Settings and diagnostics"
+            >
+              <SlidersHorizontal size={18} />
             </button>
           </div>
         </header>
 
-        {/* Notice & Error Banner */}
+        {/* Notifications & System Alerts */}
         {errorMessage && (
-          <div className={`${styles.noticeBanner} ${styles.noticeWarning}`}>
-            <span>⚠️ {errorMessage}</span>
+          <div className={`${styles.noticeBanner} ${styles.noticeWarning}`} role="alert">
+            <div className={styles.noticeContent}>
+              <AlertCircle size={18} />
+              <span>{errorMessage}</span>
+            </div>
             <button className={styles.noticeClose} onClick={() => setErrorMessage(null)}>
-              ✕
+              <X size={16} />
             </button>
           </div>
         )}
@@ -869,170 +1033,147 @@ export default function Home() {
                 ? styles.noticeWarning
                 : notice.type === "info"
                 ? styles.noticeInfo
-                : ""
+                : styles.noticeSuccess
             }`}
+            role="status"
           >
-            <span>{notice.text}</span>
+            <div className={styles.noticeContent}>
+              {notice.type === "warning" ? (
+                <AlertCircle size={18} />
+              ) : notice.type === "info" ? (
+                <Info size={18} />
+              ) : (
+                <CheckCircle2 size={18} />
+              )}
+              <span>{notice.text}</span>
+            </div>
             <button className={styles.noticeClose} onClick={() => setNotice(null)}>
-              ✕
+              <X size={16} />
             </button>
           </div>
         )}
 
-        {/* Notice & Error Banner */}
-
-        {/* Connection Info Bar — Always visible */}
-        <div className={styles.connectionInfoBar}>
-          <div className={styles.connectionInfoItem}>
-            <span className={styles.connectionInfoLabel}>Signaling:</span>
-            <span className={`${styles.connectionInfoDot} ${isWsConnected ? styles.connectionInfoDotOk : styles.connectionInfoDotFail}`} />
-            <span className={styles.connectionInfoValue}>
-              {signalingUrl || getDefaultSignalingUrl()}
-            </span>
-          </div>
-          <div className={styles.connectionInfoItem}>
-            <span className={styles.connectionInfoLabel}>WS:</span>
-            <span className={styles.connectionInfoValue}>
-              {isWsConnected ? "Connected" : "Disconnected"}
-            </span>
-          </div>
-          <div className={styles.connectionInfoItem}>
-            <span className={styles.connectionInfoLabel}>Channel:</span>
-            <span className={styles.connectionInfoValue}>{channelCode}</span>
-          </div>
-          <div className={styles.connectionInfoItem}>
-            <span className={styles.connectionInfoLabel}>Peers:</span>
-            <span className={styles.connectionInfoValue}>{otherDevices.length} discovered, {connectedPeerIds.length} P2P</span>
-          </div>
-          <div className={styles.connectionInfoItem}>
-            <span className={styles.connectionInfoLabel}>ID:</span>
-            <span className={styles.connectionInfoValue}>{deviceId.slice(0, 12)}</span>
-          </div>
-        </div>
-
-        {/* Connected Devices & Channel Toolbar */}
-        <section className={styles.deviceCard}>
-          <div className={styles.deviceCardHeader}>
-            <h2 className={styles.sectionTitle}>
-              <span>Connected Devices ({allDevices.length})</span>
-            </h2>
-
-            <div className={styles.pairingBox}>
-              <div className={styles.pairingCodePill} title="Share this channel code with other devices">
-                <span className={styles.pairingCodeLabel}>Channel:</span>
-                <span>{channelCode}</span>
-                <button
-                  className={styles.secondaryBtn}
-                  style={{ padding: "3px 8px", fontSize: "11px" }}
-                  onClick={copyChannelCode}
-                  title="Copy Channel Code"
-                >
-                  Copy
-                </button>
+        {/* Prominent Received File Notification Card */}
+        {recentReceived && (
+          <div className={styles.receivedFileCard}>
+            <div className={styles.receivedFileLeft}>
+              <div className={styles.receivedThumbnailBox}>
+                {renderFileThumbnail(recentReceived.mimeType, recentReceived.filename, recentReceived.downloadUrl || recentReceived.fileData)}
               </div>
+              <div className={styles.receivedDetails}>
+                <div className={styles.receivedBadgeRow}>
+                  <CheckCircle2 size={13} />
+                  <span>File Received</span>
+                  <span style={{ opacity: 0.7, textTransform: "none", fontWeight: 500 }}>
+                    • {recentReceived.method === "p2p" ? "P2P Direct" : "Secure Relay"}
+                  </span>
+                </div>
+                <span className={styles.receivedFileName}>{recentReceived.filename}</span>
+                <span className={styles.receivedFileMeta}>
+                  {formatBytes(recentReceived.size)} • From <strong>{recentReceived.senderName}</strong>
+                </span>
+              </div>
+            </div>
+            <div className={styles.receivedActions}>
+              <button
+                className={styles.primaryBtn}
+                onClick={() => handleTransferAction(recentReceived)}
+              >
+                <Download size={15} />
+                <span>Download</span>
+              </button>
+              <button
+                className={styles.iconBtn}
+                onClick={() => setRecentReceived(null)}
+                title="Dismiss"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        )}
 
+        {/* ==================================================
+            2. CHANNEL HERO (Warm Atmospheric Lighting)
+            ================================================== */}
+        <section className={styles.channelHero} aria-label="Current Channel Info">
+          <div className={styles.channelMainRow}>
+            <div className={styles.channelInfoBlock}>
+              <span className={styles.channelTag}>Current Channel</span>
+              <span className={styles.channelCodeDisplay}>{channelCode}</span>
+              <p className={styles.channelHint}>
+                Share this channel code or link with another device to connect instantly.
+              </p>
+            </div>
+
+            <div className={styles.channelPrimaryActions}>
+              <button className={styles.primaryBtn} onClick={copyChannelCode}>
+                {hasCopiedCode ? <Check size={16} /> : <Copy size={16} />}
+                <span>{hasCopiedCode ? "Copied Code" : "Copy Code"}</span>
+              </button>
+              <button className={styles.secondaryBtn} onClick={copyShareLink}>
+                {hasCopiedLink ? <Check size={16} /> : <Share2 size={16} />}
+                <span>{hasCopiedLink ? "Copied Link" : "Share Link"}</span>
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.channelSecondaryRow}>
+            <div className={styles.joinForm}>
               <input
-                className={styles.inlineInput}
-                style={{ width: "120px", minWidth: "100px", textTransform: "uppercase" }}
+                className={styles.channelInput}
                 placeholder="JOIN CODE"
-                maxLength={10}
+                maxLength={12}
                 value={channelInput}
                 onChange={(e) => setChannelInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleJoinChannel()}
+                aria-label="Join Channel Code Input"
               />
-              <button className={styles.secondaryBtn} onClick={() => handleJoinChannel()}>
+              <button
+                className={styles.secondaryBtn}
+                onClick={() => handleJoinChannel()}
+                disabled={!channelInput.trim()}
+              >
                 Join
               </button>
+            </div>
 
-              <button
-                className={styles.secondaryBtn}
-                style={{ background: "#f1f5f9", borderColor: "#cbd5e1" }}
-                onClick={handleNewChannel}
-                title="Create a fresh new channel code"
-              >
-                🔄 New
+            <div className={styles.channelTools}>
+              <button className={styles.secondaryBtn} onClick={handleNewChannel} title="Create fresh new channel">
+                <Plus size={15} />
+                <span>New Channel</span>
               </button>
-
-              <button
-                className={styles.secondaryBtn}
-                style={{ background: "#fef2f2", color: "#b91c1c", borderColor: "#fecaca" }}
-                onClick={handleLeaveChannel}
-                title="Leave the current channel"
-              >
-                🚪 Leave
+              <button className={styles.dangerBtn} onClick={handleLeaveChannel} title="Leave channel">
+                <LogOut size={15} />
+                <span>Leave</span>
               </button>
             </div>
           </div>
+        </section>
 
-          {/* Device Grid */}
-          <div className={styles.deviceGrid}>
-            {/* Local Device */}
-            <div className={`${styles.deviceItem} ${styles.deviceItemActive}`}>
-              <div className={styles.deviceItemContent}>
-                <div className={styles.deviceIcon}>{platformInfo.icon}</div>
-                <div className={styles.deviceMeta}>
-                  <p className={styles.deviceName}>{deviceName}</p>
-                  <p className={styles.deviceSub}>
-                    <span className={styles.onlineIndicator} />
-                    {platformInfo.type}
-                    <span className={styles.thisDeviceTag}>This Device</span>
-                  </p>
-                </div>
-              </div>
+        {/* ==================================================
+            3. DEVICES IN CHANNEL
+            ================================================== */}
+        <section className={styles.deviceSection} aria-label="Devices in Channel">
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionTitle}>
+              <span>Devices in Channel</span>
+              <span className={styles.countBadge}>{allDevices.length}</span>
             </div>
 
-            {/* Remote Channel Members */}
-            {otherDevices.map((remote) => {
-              const peerState = peerStates.get(remote.id);
-              const isP2P = peerState === "connected";
-              const isConnecting = peerState === "connecting";
-
-              const icon =
-                remote.type === "mobile"
-                  ? "📱"
-                  : remote.type === "tablet"
-                  ? "📱"
-                  : remote.type === "browser"
-                  ? "🌐"
-                  : "💻";
-
-              return (
-                <div
-                  key={remote.id}
-                  className={`${styles.deviceItem} ${recipient === remote.id ? styles.deviceItemActive : ""}`}
-                  onClick={() => setRecipient(remote.id)}
-                  title={`Click to send directly to ${remote.name}`}
-                >
-                  <div className={styles.deviceItemContent}>
-                    <div className={styles.deviceIcon}>{icon}</div>
-                    <div className={styles.deviceMeta}>
-                      <p className={styles.deviceName}>{remote.name}</p>
-                      <p className={styles.deviceSub}>
-                        <span className={styles.onlineIndicator} />
-                        {isP2P ? "P2P Connected" : isConnecting ? "Connecting" : "Cloud Available"}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Device Controls */}
-          <div className={styles.deviceControls}>
-            <div className={styles.nameSettingGroup}>
+            <div className={styles.deviceSettingsToggle}>
               {isEditingName ? (
-                <>
+                <div className={styles.nameEditForm}>
                   <input
-                    className={styles.inlineInput}
-                    placeholder="Enter device name (e.g. MacBook)"
+                    className={styles.nameInput}
+                    placeholder="Device name"
                     value={nameInput}
                     onChange={(e) => setNameInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSaveName()}
                     autoFocus
                   />
                   <button className={styles.primaryBtn} onClick={handleSaveName}>
-                    Save Name
+                    Save
                   </button>
                   <button
                     className={styles.secondaryBtn}
@@ -1043,182 +1184,425 @@ export default function Home() {
                   >
                     Cancel
                   </button>
-                </>
+                </div>
               ) : (
-                <>
-                  <span style={{ fontSize: "14px", fontWeight: 600, color: "#334155" }}>
-                    Device Name: <strong style={{ color: "#0f172a" }}>{deviceName}</strong>
-                  </span>
-                  <button
-                    className={styles.secondaryBtn}
-                    onClick={() => {
-                      setNameInput(deviceName);
-                      setIsEditingName(true);
-                    }}
-                  >
-                    ✏️ Rename
-                  </button>
-                </>
+                <button
+                  className={styles.secondaryBtn}
+                  onClick={() => {
+                    setNameInput(deviceName);
+                    setIsEditingName(true);
+                  }}
+                  title="Rename your device"
+                >
+                  <Edit3 size={14} />
+                  <span>Rename ({deviceName})</span>
+                </button>
               )}
             </div>
-
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <span style={{ fontSize: "12px", color: "#64748b" }}>
-                Device ID: <code>{deviceId.slice(0, 8)}</code>
-              </span>
-            </div>
           </div>
+
+          <div className={styles.deviceGrid}>
+            {/* Local Device Card */}
+            <div className={`${styles.deviceCardItem} ${styles.deviceCardSelected}`}>
+              <div className={styles.deviceCardHeader}>
+                <div className={styles.deviceIconBox}>
+                  {getDeviceIcon(platformInfo.type, deviceName)}
+                </div>
+                <span className={styles.thisDeviceBadge}>This Device</span>
+              </div>
+              <div className={styles.deviceInfo}>
+                <span className={styles.deviceName}>{deviceName}</span>
+                <div className={styles.deviceMetaRow}>
+                  <span className={styles.statusDotOnline} style={{ width: 7, height: 7, borderRadius: "50%" }} />
+                  <span>Online</span>
+                  <span>•</span>
+                  <span>{platformInfo.type}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Remote Channel Members */}
+            {otherDevices.map((remote) => {
+              const peerState = peerStates.get(remote.id);
+              const isP2P = peerState === "connected";
+              const isConnecting = peerState === "connecting";
+              const isSelected = recipient === remote.id;
+
+              return (
+                <div
+                  key={remote.id}
+                  className={`${styles.deviceCardItem} ${isSelected ? styles.deviceCardSelected : ""}`}
+                  onClick={() => setRecipient(remote.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      setRecipient(remote.id);
+                    }
+                  }}
+                  aria-label={`Select ${remote.name} as transfer recipient`}
+                >
+                  <div className={styles.deviceCardHeader}>
+                    <div className={styles.deviceIconBox}>
+                      {getDeviceIcon(remote.type, remote.name)}
+                    </div>
+                    <span
+                      className={`${styles.transportBadge} ${
+                        isP2P
+                          ? styles.transportP2P
+                          : isConnecting
+                          ? styles.transportConnecting
+                          : styles.transportCloud
+                      }`}
+                    >
+                      {isP2P ? (
+                        <>
+                          <Zap size={11} /> P2P Ready
+                        </>
+                      ) : isConnecting ? (
+                        <>
+                          <ArrowRight size={11} /> Connecting...
+                        </>
+                      ) : (
+                        <>
+                          <Cloud size={11} /> Cloud Ready
+                        </>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className={styles.deviceInfo}>
+                    <span className={styles.deviceName}>{remote.name}</span>
+                    <div className={styles.deviceMetaRow}>
+                      <span className={styles.statusDotOnline} style={{ width: 7, height: 7, borderRadius: "50%" }} />
+                      <span>Online</span>
+                      <span>•</span>
+                      <span>{remote.type}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {otherDevices.length === 0 && (
+            <div className={styles.emptyDevices}>
+              <p className={styles.emptyDevicesTitle}>No other devices connected yet</p>
+              <p className={styles.emptyDevicesSubtitle}>
+                Open SlideDrop on another phone, computer, or tablet with channel <strong>{channelCode}</strong> to connect and send files.
+              </p>
+            </div>
+          )}
         </section>
 
-        {/* Main 2-Column Grid */}
+        {/* ==================================================
+            4. MAIN 2-COLUMN WORKSPACE: SEND FILES & HISTORY
+            ================================================== */}
         <div className={styles.mainGrid}>
-          {/* Send Something Panel */}
-          <section className={styles.panel}>
-            <h2 className={styles.panelTitle}>
-              <span>📤 Send to Devices</span>
-            </h2>
+          {/* Send Files Panel */}
+          <section className={styles.panel} aria-label="Send files to devices">
+            <div className={styles.panelHeader}>
+              <h2 className={styles.panelTitle}>
+                <Upload size={20} />
+                <span>Send Files</span>
+              </h2>
+            </div>
 
-            {/* Recipient Selector (Authoritative) */}
+            {/* Recipient Selection */}
             <div className={styles.fieldGroup}>
-              <label className={styles.fieldLabel}>
-                <span>Send To</span>
+              <div className={styles.fieldLabelRow}>
+                <label htmlFor="recipient-select" className={styles.fieldLabel}>
+                  Recipient
+                </label>
                 <span className={styles.fieldHint}>
                   {recipient === "all"
-                    ? `Broadcasting to channel (${otherDevices.length} recipient${otherDevices.length === 1 ? "" : "s"})`
-                    : "Direct to selected device"}
+                    ? "Each device will use the fastest available connection."
+                    : "Direct transfer to selected device."}
                 </span>
-              </label>
+              </div>
               <select
+                id="recipient-select"
                 className={styles.selectInput}
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
               >
-                <option value="all">📢 All Devices in Channel ({otherDevices.length})</option>
+                <option value="all">
+                  All Devices in Channel ({otherDevices.length} available)
+                </option>
                 {otherDevices.map((d) => {
                   const isP2P = peerStates.get(d.id) === "connected";
                   return (
                     <option key={d.id} value={d.id}>
-                      {d.name} ({d.type}) {isP2P ? "⚡ P2P Direct" : "☁️ Cloud Relay"}
+                      {d.name} ({d.type}) — {isP2P ? "P2P Direct" : "Secure Relay"}
                     </option>
                   );
                 })}
               </select>
             </div>
 
-            {/* Quick Note Transfer */}
-            <div className={styles.fieldGroup}>
-              <label className={styles.fieldLabel}>
-                <span>Quick Note / Text</span>
-                <span className={styles.fieldHint}>{textMessage.length} chars</span>
-              </label>
-              <textarea
-                className={styles.textareaInput}
-                placeholder="Type a message, paste a link, code snippet, or note to send instantly..."
-                value={textMessage}
-                onChange={(e) => setTextMessage(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    handleSendText();
-                  }
-                }}
-              />
+            {/* Mode Segmented Controls */}
+            <div className={styles.composerTabs}>
               <button
-                className={`${styles.primaryBtn} ${styles.sendBtn}`}
-                disabled={!textMessage.trim()}
-                onClick={handleSendText}
+                className={`${styles.composerTab} ${composerMode === "file" ? styles.composerTabActive : ""}`}
+                onClick={() => setComposerMode("file")}
+                type="button"
               >
-                💬 Send Text Note
+                <Upload size={15} />
+                <span>File Transfer</span>
+              </button>
+              <button
+                className={`${styles.composerTab} ${composerMode === "note" ? styles.composerTabActive : ""}`}
+                onClick={() => setComposerMode("note")}
+                type="button"
+              >
+                <MessageSquare size={15} />
+                <span>Quick Note</span>
               </button>
             </div>
 
-            <div className={styles.divider}>or transfer a file</div>
+            {composerMode === "file" ? (
+              <div className={styles.fieldGroup}>
+                {/* Large Dropzone */}
+                <div
+                  className={`${styles.dropzone} ${isDragging ? styles.dropzoneActive : ""}`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  aria-label="File upload dropzone"
+                >
+                  <div className={styles.dropzoneIconBox}>
+                    <Upload size={28} />
+                  </div>
+                  <p className={styles.dropzoneTitle}>
+                    {selectedFiles.length > 0 ? "Add more files or drop here" : "Drop files here or click to browse"}
+                  </p>
+                  <p className={styles.dropzoneSub}>
+                    Supports images, videos, PDFs, archives, documents and more.
+                  </p>
+                  <button
+                    type="button"
+                    className={styles.secondaryBtn}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    <Upload size={15} />
+                    <span>Select Files</span>
+                  </button>
+                  <input
+                    type="file"
+                    multiple
+                    ref={fileInputRef}
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        const files = Array.from(e.target.files);
+                        setSelectedFiles((prev) => [...prev, ...files]);
+                      }
+                    }}
+                  />
+                </div>
 
-            {/* File Transfer */}
-            <div className={styles.fieldGroup}>
-              <div
-                className={`${styles.dropzone} ${isDragging ? styles.dropzoneActive : ""}`}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <div className={styles.dropzoneIcon}>📁</div>
-                <p className={styles.dropzoneText}>
-                  {selectedFile ? "Click or drag to replace file" : "Drop files here or click to browse"}
-                </p>
-                <p className={styles.dropzoneSub}>Supports PDFs, images, docs, videos up to 250MB</p>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files[0]) {
-                      setSelectedFile(e.target.files[0]);
+                {/* Multi-File Preview Strip */}
+                {selectedFiles.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <div className={styles.selectedFilesSummary}>
+                      <span className={styles.selectedFilesCount}>
+                        {selectedFiles.length} file{selectedFiles.length > 1 ? "s" : ""} selected • {formatBytes(totalSelectedSize)}
+                      </span>
+                      <button
+                        type="button"
+                        className={styles.secondaryBtn}
+                        style={{ padding: "4px 10px", minHeight: "30px", fontSize: "12px" }}
+                        onClick={() => {
+                          setSelectedFiles([]);
+                          if (fileInputRef.current) fileInputRef.current.value = "";
+                        }}
+                      >
+                        Clear all
+                      </button>
+                    </div>
+
+                    <div className={styles.filePreviewStrip}>
+                      {selectedFiles.map((file, idx) => {
+                        const previewKey = `${file.name}-${file.size}`;
+                        const previewUrl = filePreviews.get(previewKey);
+                        const isImage = file.type.startsWith("image/");
+                        const isVideo = file.type.startsWith("video/");
+                        const isPdf = file.type.includes("pdf") || file.name.toLowerCase().endsWith(".pdf");
+                        const isArchive = file.type.includes("zip") || file.type.includes("tar") || file.type.includes("compressed") || /\.(zip|tar|gz|rar|7z)$/i.test(file.name);
+                        const isCode = file.type.includes("json") || file.type.includes("javascript") || file.type.includes("typescript") || /\.(ts|js|jsx|tsx|html|css|py|json|md)$/i.test(file.name);
+
+                        return (
+                          <div key={`${file.name}-${idx}`} className={styles.filePreviewCard}>
+                            <button
+                              className={styles.previewRemoveBtn}
+                              onClick={() => removeSelectedFile(idx)}
+                              title="Remove file"
+                              aria-label={`Remove ${file.name}`}
+                            >
+                              <X size={14} />
+                            </button>
+
+                            <div className={styles.previewThumbnailWrapper}>
+                              {isImage && previewUrl ? (
+                                <img
+                                  src={previewUrl}
+                                  alt={file.name}
+                                  className={styles.previewThumbnailImg}
+                                />
+                              ) : isVideo && previewUrl ? (
+                                <>
+                                  <video
+                                    src={previewUrl}
+                                    className={styles.previewThumbnailImg}
+                                    muted
+                                  />
+                                  <div className={styles.previewPlayBadge}>
+                                    <Play size={22} fill="#ffffff" />
+                                  </div>
+                                </>
+                              ) : isPdf ? (
+                                <div className={styles.pdfBadgeBox}>
+                                  <FileText size={26} strokeWidth={2} />
+                                  <span className={styles.pdfLabelPill}>PDF</span>
+                                </div>
+                              ) : isArchive ? (
+                                <FileArchive size={28} strokeWidth={2} style={{ color: "#FBBF24" }} />
+                              ) : isCode ? (
+                                <FileCode size={28} strokeWidth={2} style={{ color: "#38BDF8" }} />
+                              ) : (
+                                <FileIcon size={28} strokeWidth={2} style={{ color: "#9AA4B2" }} />
+                              )}
+                            </div>
+
+                            <div className={styles.previewMeta}>
+                              <span className={styles.previewMetaName} title={file.name}>
+                                {file.name}
+                              </span>
+                              <span className={styles.previewMetaSub}>
+                                {formatBytes(file.size)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Transfer Progress Card */}
+                {transferProgress !== null && (
+                  <div className={styles.progressCard}>
+                    <div className={styles.progressHeader}>
+                      <span>{transferStatusText}</span>
+                      <span>{transferProgress}%</span>
+                    </div>
+                    <div className={styles.progressBarBg}>
+                      <div
+                        className={styles.progressBarFill}
+                        style={{ width: `${Math.max(4, transferProgress)}%` }}
+                      />
+                    </div>
+
+                    {multiRecipientProgress.size > 0 && (
+                      <div className={styles.multiRecipientList}>
+                        {Array.from(multiRecipientProgress.entries()).map(([peerId, info]) => {
+                          const dev = otherDevices.find((d) => d.id === peerId);
+                          return (
+                            <div key={peerId} className={styles.multiRecipientItem}>
+                              <span>{dev?.name || "Peer"} ({info.method})</span>
+                              <strong>{info.status}</strong>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  className={`${styles.primaryBtn} ${styles.sendBtn}`}
+                  disabled={
+                    selectedFiles.length === 0 ||
+                    (transferProgress !== null && transferProgress > 0 && transferProgress < 100)
+                  }
+                  onClick={handleSendFiles}
+                >
+                  <Send size={18} />
+                  <span>
+                    {selectedFiles.length > 0
+                      ? `Send ${selectedFiles.length} File${selectedFiles.length > 1 ? "s" : ""}`
+                      : "Send Files"}
+                  </span>
+                </button>
+              </div>
+            ) : (
+              <div className={styles.fieldGroup}>
+                <div className={styles.fieldLabelRow}>
+                  <label htmlFor="text-note" className={styles.fieldLabel}>
+                    Quick Note or Link
+                  </label>
+                  <span className={styles.fieldHint}>{textMessage.length} characters</span>
+                </div>
+                <textarea
+                  id="text-note"
+                  className={styles.textareaInput}
+                  placeholder="Type a message, paste links, code snippets, or notes to send instantly..."
+                  value={textMessage}
+                  onChange={(e) => setTextMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      handleSendText();
                     }
                   }}
                 />
+                <button
+                  className={`${styles.primaryBtn} ${styles.sendBtn}`}
+                  disabled={!textMessage.trim()}
+                  onClick={handleSendText}
+                >
+                  <Send size={18} />
+                  <span>Send Note</span>
+                </button>
               </div>
-
-              {selectedFile && (
-                <div className={styles.fileSelectedBox}>
-                  <div className={styles.fileSelectedInfo}>
-                    <span>📄</span>
-                    <div>
-                      <p className={styles.fileSelectedName}>{selectedFile.name}</p>
-                      <p className={styles.fileSelectedSize}>{formatBytes(selectedFile.size)}</p>
-                    </div>
-                  </div>
-                  <button
-                    className={styles.removeFileBtn}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedFile(null);
-                      if (fileInputRef.current) fileInputRef.current.value = "";
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
-
-              {transferProgress !== null && (
-                <div className={styles.progressContainer}>
-                  <div className={styles.progressBarBg}>
-                    <div className={styles.progressBarFill} style={{ width: `${transferProgress}%` }} />
-                  </div>
-                  <span className={styles.progressText}>{transferStatusText}</span>
-                </div>
-              )}
-
-              <button
-                className={`${styles.primaryBtn} ${styles.sendBtn}`}
-                disabled={!selectedFile || (transferProgress !== null && transferProgress > 0 && transferProgress < 100)}
-                onClick={handleSendFile}
-              >
-                🚀 Send File
-              </button>
-            </div>
+            )}
           </section>
 
-          {/* Transfer History Panel */}
-          <section className={styles.panel}>
+          {/* Recent Transfers History Panel */}
+          <section className={styles.panel} aria-label="Recent Transfers">
             <div className={styles.panelHeader}>
               <h2 className={styles.panelTitle}>
-                <span>📥 Transfer History ({transfers.length})</span>
+                <Download size={20} />
+                <span>Recent Transfers</span>
+                {transfers.length > 0 && (
+                  <span className={styles.countBadge}>{transfers.length}</span>
+                )}
               </h2>
               {transfers.length > 0 && (
-                <button className={styles.clearBtn} onClick={clearHistory}>
-                  Clear All
+                <button className={styles.secondaryBtn} onClick={clearHistory}>
+                  Clear
                 </button>
               )}
             </div>
 
             {transfers.length === 0 ? (
               <div className={styles.emptyState}>
-                <div className={styles.emptyIcon}>📭</div>
+                <div className={styles.emptyIconBox}>
+                  <Download size={24} />
+                </div>
                 <p className={styles.emptyTitle}>No transfers yet</p>
                 <p className={styles.emptySubtitle}>
-                  Sent and received files, links, and text notes will appear here in real-time.
+                  Files and text you send or receive will appear here in real-time.
                 </p>
               </div>
             ) : (
@@ -1226,62 +1610,99 @@ export default function Home() {
                 {transfers.map((item) => {
                   const isSentByMe = item.senderDeviceId === deviceId;
                   const isText = Boolean(item.textContent);
+                  const isP2P = item.method === "p2p";
 
                   return (
                     <div
                       key={item.id}
                       className={styles.transferItem}
                       onClick={() => handleTransferAction(item)}
-                      title={isText ? "Click to copy text note" : "Click to download file"}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          handleTransferAction(item);
+                        }
+                      }}
+                      title={isText ? "Click to copy note" : "Click to download"}
                     >
-                      <div className={styles.transferIcon}>{isText ? "💬" : "📄"}</div>
-                      <div className={styles.transferDetails}>
-                        <div className={styles.transferHeader}>
-                          <p className={styles.transferFilename}>{item.filename}</p>
-                          <span
-                            className={`${styles.methodBadge} ${
-                              item.method === "p2p" ? styles.methodP2P : styles.methodStorage
-                            }`}
-                          >
-                            {item.method === "p2p" ? "⚡ P2P Direct" : "☁️ Cloud Relay"}
-                          </span>
+                      <div className={styles.transferLeft}>
+                        {/* LARGE PREVIEW THUMBNAIL (VISUAL ANCHOR) */}
+                        <div className={styles.transferThumbBox}>
+                          {isText ? (
+                            <MessageSquare size={24} strokeWidth={2} />
+                          ) : (
+                            renderFileThumbnail(item.mimeType, item.filename, item.downloadUrl || item.fileData)
+                          )}
                         </div>
 
-                        {item.textContent && (
-                          <p className={styles.transferSnippet}>
-                            {item.textContent.length > 90
-                              ? item.textContent.slice(0, 90) + "…"
-                              : item.textContent}
-                          </p>
-                        )}
+                        <div className={styles.transferDetails}>
+                          {/* 1. FILE/TEXT IS DOMINANT */}
+                          {isText ? (
+                            <p className={styles.transferTextQuote}>
+                              &ldquo;{item.textContent}&rdquo;
+                            </p>
+                          ) : (
+                            <span className={styles.transferName} title={item.filename}>
+                              {item.filename}
+                            </span>
+                          )}
 
-                        <div className={styles.transferMeta}>
-                          <span>
-                            {isSentByMe ? `To: ${item.recipientName}` : `From: ${item.senderName}`}
-                          </span>
-                          <span>•</span>
-                          <span>{formatBytes(item.size)}</span>
-                          <span>•</span>
-                          <span>{formatTime(item.createdAt)}</span>
+                          {/* 2. PERSON & SIZE IS SECOND */}
+                          <div className={styles.transferMetaRow}>
+                            <span>
+                              {isSentByMe ? `To: ${item.recipientName}` : `From: ${item.senderName}`}
+                            </span>
+                            <span>•</span>
+                            <span>{formatBytes(item.size)}</span>
+                            <span>•</span>
+                            <span>{formatTime(item.createdAt)}</span>
+                            <span>•</span>
+                            <span className={styles.transferStatusCompleted}>
+                              <Check size={12} strokeWidth={3} /> Completed
+                            </span>
+                            <span>•</span>
+                            <span className={styles.transferSubtleTransport}>
+                              {isP2P ? <Zap size={11} /> : <Cloud size={11} />}
+                              {isP2P ? "P2P Direct" : "Secure Relay"}
+                            </span>
+                          </div>
                         </div>
                       </div>
 
                       <div className={styles.transferActions}>
                         <button
-                          className={styles.actionBtn}
+                          className={styles.secondaryBtn}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleTransferAction(item);
                           }}
+                          aria-label={isText ? "Copy note" : "Download file"}
                         >
-                          {copiedId === item.id ? "✓ Copied" : isText ? "📋 Copy" : "⬇️ Download"}
+                          {copiedId === item.id ? (
+                            <>
+                              <Check size={14} />
+                              <span>Copied</span>
+                            </>
+                          ) : isText ? (
+                            <>
+                              <Copy size={14} />
+                              <span>Copy</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download size={14} />
+                              <span>Download</span>
+                            </>
+                          )}
                         </button>
                         <button
-                          className={styles.deleteBtn}
+                          className={styles.iconBtn}
                           onClick={(e) => deleteTransfer(item.id, e)}
                           title="Delete"
+                          aria-label="Delete"
                         >
-                          ✕
+                          <Trash2 size={15} />
                         </button>
                       </div>
                     </div>
@@ -1291,41 +1712,45 @@ export default function Home() {
             )}
           </section>
         </div>
+      </div>
 
-        {/* Connection Diagnostics Modal */}
-        {showDiagnostics && (
-          <div className={styles.modalOverlay} onClick={() => setShowDiagnostics(false)}>
-            <div className={styles.modalCard} onClick={(e) => e.stopPropagation()} style={{ width: "min(600px, 95vw)" }}>
-              <div className={styles.modalHeader}>
-                <h3 className={styles.modalTitle}>⚡ SlideDrop Diagnostics</h3>
-                <button className={styles.modalCloseBtn} onClick={() => setShowDiagnostics(false)}>
-                  ✕
-                </button>
-              </div>
+      {/* ==================================================
+          SETTINGS & TELEMETRY MODAL
+          ================================================== */}
+      {showDiagnostics && (
+        <div className={styles.modalOverlay} onClick={() => setShowDiagnostics(false)}>
+          <div
+            className={styles.modalCard}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(580px, 95vw)" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+          >
+            <div className={styles.modalHeader}>
+              <h3 id="settings-title" className={styles.modalTitle}>
+                <SlidersHorizontal size={20} />
+                <span>Settings & Diagnostics</span>
+              </h3>
+              <button
+                className={styles.iconBtn}
+                onClick={() => setShowDiagnostics(false)}
+                aria-label="Close settings"
+              >
+                <X size={16} />
+              </button>
+            </div>
 
-              <div className={styles.diagnosticsContent}>
-                <p className={styles.diagSectionTitle}>Connection</p>
-                <div className={styles.diagRow}>
-                  <span>Signaling URL:</span>
-                  <strong>{signalingUrl || getDefaultSignalingUrl()}</strong>
-                </div>
-                <div className={styles.diagRow}>
-                  <span>WebSocket Status:</span>
-                  <strong>{isWsConnected ? "🟢 Connected" : "🔴 Disconnected"}</strong>
-                </div>
-                <div className={styles.diagRow}>
-                  <span>Active Channel:</span>
-                  <strong>{channelCode}</strong>
-                </div>
-
-                <p className={styles.diagSectionTitle}>Identity</p>
-                <div className={styles.diagRow}>
-                  <span>Device ID:</span>
-                  <strong><code>{deviceId}</code></strong>
-                </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <p className={styles.diagSectionTitle}>Device Identity</p>
                 <div className={styles.diagRow}>
                   <span>Device Name:</span>
                   <strong>{deviceName}</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>Device ID:</span>
+                  <strong><code>{deviceId}</code></strong>
                 </div>
                 <div className={styles.diagRow}>
                   <span>Platform:</span>
@@ -1335,29 +1760,44 @@ export default function Home() {
                   <span>Firebase Auth:</span>
                   <strong>{currentUser ? `Authenticated (${currentUser.uid.slice(0, 8)})` : "Anonymous"}</strong>
                 </div>
+              </div>
 
-                <p className={styles.diagSectionTitle}>Discovery</p>
+              <div>
+                <p className={styles.diagSectionTitle}>Connection Details</p>
                 <div className={styles.diagRow}>
-                  <span>Channel Members (total):</span>
+                  <span>Signaling Server:</span>
+                  <strong>{signalingUrl || getDefaultSignalingUrl()}</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>WebSocket Status:</span>
+                  <strong>{isWsConnected ? "Connected" : "Disconnected"}</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>Current Channel:</span>
+                  <strong>{channelCode}</strong>
+                </div>
+                <div className={styles.diagRow}>
+                  <span>Channel Members:</span>
                   <strong>{allDevices.length}</strong>
                 </div>
                 <div className={styles.diagRow}>
-                  <span>Remote Devices:</span>
-                  <strong>{otherDevices.length} ({otherDevices.map(d => d.name).join(", ") || "none"})</strong>
-                </div>
-                <div className={styles.diagRow}>
-                  <span>WebRTC P2P Peers:</span>
+                  <span>WebRTC DataChannels:</span>
                   <strong>{connectedPeerIds.length} connected</strong>
                 </div>
-                <div className={styles.diagRow}>
-                  <span>Active Architecture:</span>
-                  <strong>{connectedPeerIds.length > 0 ? "⚡ A (Direct WebRTC P2P)" : "☁️ B (Cloud Relay)"}</strong>
-                </div>
+              </div>
 
-                <p className={styles.diagSectionTitle}>Event Log ({signalingEvents.length})</p>
+              <div>
+                <p className={styles.diagSectionTitle}>About SlideDrop</p>
+                <div className={styles.aboutBox}>
+                  SlideDrop enables private, direct device-to-device file and text note transfer using WebRTC P2P DataChannels, with encrypted Firebase Storage relay fallback when peer connections are restricted by NATs/firewalls.
+                </div>
+              </div>
+
+              <div>
+                <p className={styles.diagSectionTitle}>Signaling Event Log ({signalingEvents.length})</p>
                 <div className={styles.eventLog}>
                   {signalingEvents.length === 0 ? (
-                    <span style={{ color: "#64748b" }}>No events yet...</span>
+                    <span style={{ color: "var(--text-muted)" }}>No events recorded yet...</span>
                   ) : (
                     signalingEvents.map((evt, i) => {
                       const time = new Date(evt.timestamp);
@@ -1366,7 +1806,7 @@ export default function Home() {
                         <div key={`evt-${i}`} className={styles.eventLogEntry}>
                           <span className={styles.eventLogTime}>{ts}</span>
                           <span className={styles.eventLogName}>{evt.event}</span>
-                          <span className={styles.eventLogDetail}>{evt.detail || ""}</span>
+                          <span style={{ color: "var(--text-secondary)" }}>{evt.detail || ""}</span>
                         </div>
                       );
                     })
@@ -1375,8 +1815,8 @@ export default function Home() {
               </div>
             </div>
           </div>
-        )}
-      </div>
-    </main>
+        </div>
+      )}
+    </div>
   );
 }

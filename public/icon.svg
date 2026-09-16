@@ -1,0 +1,16 @@
+<svg width="32" height="32" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="36" height="36" rx="10" fill="#0D1117" />
+  <!-- Top Sliding Plane (Rightward) -->
+  <path
+    d="M9 13.5C9 11.567 10.567 10 12.5 10H23C24.3807 10 25.5 11.1193 25.5 12.5C25.5 13.8807 24.3807 15 23 15H10.5C9.67157 15 9 14.3284 9 13.5Z"
+    fill="#FF9F1C"
+  />
+  <circle cx="27" cy="12.5" r="2.2" fill="#FFC857" />
+
+  <!-- Bottom Sliding Plane (Leftward) -->
+  <path
+    d="M27 22.5C27 24.433 25.433 26 23.5 26H13C11.6193 26 10.5 24.8807 10.5 23.5C10.5 22.1193 11.6193 21 13 21H25.5C26.3284 21 27 21.6716 27 22.5Z"
+    fill="#FF6B35"
+  />
+  <circle cx="9" cy="23.5" r="2.2" fill="#FF9F1C" />
+</svg>
