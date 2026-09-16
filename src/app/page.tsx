@@ -584,6 +584,37 @@ export default function Home() {
     webrtcRef.current.syncPeers(remoteIds);
   }, [remoteMembers, deviceId]);
 
+  // Network State & Visibility Change Recovery (Mobile browser background/foreground)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleOnline = () => {
+      console.log("[Network] Browser online event fired. Checking signaling connection...");
+      if (signalingRef.current && (!signalingRef.current.isConnected || signalingRef.current.getState() === "offline")) {
+        const platform = getDevicePlatform();
+        signalingRef.current.connect(channelCode, deviceId, deviceName, platform.type);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        console.log("[App] Returned to foreground. Verifying signaling connection...");
+        if (signalingRef.current && !signalingRef.current.isConnected && signalingRef.current.getState() !== "connecting") {
+          const platform = getDevicePlatform();
+          signalingRef.current.connect(channelCode, deviceId, deviceName, platform.type);
+        }
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [channelCode, deviceId, deviceName]);
+
   // Firestore Fallback Transfers Listener (Architecture B)
   useEffect(() => {
     if (!db || !currentUser || !channelCode || !deviceId) return;

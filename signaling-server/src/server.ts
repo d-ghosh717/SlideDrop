@@ -337,6 +337,22 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
           break;
         }
 
+        case "create_channel": {
+          const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+          let code = "";
+          let attempts = 0;
+          do {
+            code = "";
+            for (let i = 0; i < 6; i++) {
+              code += alphabet[Math.floor(Math.random() * alphabet.length)];
+            }
+            attempts++;
+          } while (localChannels.has(code) && attempts < 100);
+
+          sendJson(ws, { type: "channel_created", channelCode: code });
+          break;
+        }
+
         case "leave": {
           removeSessionFromChannel(session);
           sendJson(ws, { type: "left" });

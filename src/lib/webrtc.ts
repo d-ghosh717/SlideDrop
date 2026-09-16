@@ -56,6 +56,8 @@ export class WebRTCManager {
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private dataChannels: Map<string, RTCDataChannel> = new Map();
   private pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
+  private connectionTimeouts: Map<string, number> = new Map();
+  private pendingTransferAcks: Map<string, { resolve: (ok: boolean) => void; timer: number }> = new Map();
   private incomingFiles: Map<string, {
     meta: { transferId: string; filename: string; mimeType: string; size: number; totalChunks: number; senderName: string };
     chunks: string[];
@@ -106,7 +108,13 @@ export class WebRTCManager {
     for (const remoteId of remoteDeviceIds) {
       if (remoteId === this.localDeviceId) continue;
 
-      if (!this.peerConnections.has(remoteId)) {
+      const existingPc = this.peerConnections.get(remoteId);
+      const existingDc = this.dataChannels.get(remoteId);
+      const isHealthy = existingPc && existingDc && 
+        (existingPc.connectionState === "connected" || existingPc.connectionState === "connecting") &&
+        existingDc.readyState === "open";
+
+      if (!isHealthy && !this.peerConnections.has(remoteId)) {
         // Deterministic role: smaller lexicographical ID is the offerer
         const isOfferer = this.localDeviceId < remoteId;
         if (isOfferer) {
@@ -117,7 +125,7 @@ export class WebRTCManager {
     }
 
     // Close and remove peers that left
-    for (const peerId of this.peerConnections.keys()) {
+    for (const peerId of Array.from(this.peerConnections.keys())) {
       if (!remoteDeviceIds.includes(peerId)) {
         this.closePeer(peerId);
       }
@@ -136,15 +144,29 @@ export class WebRTCManager {
     this.handleCandidate(fromDeviceId, candidate);
   }
 
+  private clearConnectionTimeout(peerDeviceId: string) {
+    const t = this.connectionTimeouts.get(peerDeviceId);
+    if (t) {
+      clearTimeout(t);
+      this.connectionTimeouts.delete(peerDeviceId);
+    }
+  }
+
   public closePeer(peerDeviceId: string) {
+    this.clearConnectionTimeout(peerDeviceId);
+
     const pc = this.peerConnections.get(peerDeviceId);
     if (pc) {
-      pc.close();
+      try {
+        pc.close();
+      } catch {}
       this.peerConnections.delete(peerDeviceId);
     }
     const dc = this.dataChannels.get(peerDeviceId);
     if (dc) {
-      dc.close();
+      try {
+        dc.close();
+      } catch {}
       this.dataChannels.delete(peerDeviceId);
     }
     this.pendingCandidates.delete(peerDeviceId);
@@ -160,6 +182,12 @@ export class WebRTCManager {
     this.dataChannels.clear();
     this.pendingCandidates.clear();
     this.incomingFiles.clear();
+
+    for (const pending of this.pendingTransferAcks.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(false);
+    }
+    this.pendingTransferAcks.clear();
   }
 
   private getOrCreatePeerConnection(peerDeviceId: string): RTCPeerConnection {
@@ -171,6 +199,19 @@ export class WebRTCManager {
     this.peerConnections.set(peerDeviceId, pc);
     this.callbacks.onPeerStateChange?.(peerDeviceId, "connecting");
 
+    // Start 15s connection watchdog to avoid indefinite "Connecting..." state
+    this.clearConnectionTimeout(peerDeviceId);
+    const timeout = window.setTimeout(() => {
+      const currentPc = this.peerConnections.get(peerDeviceId);
+      const currentDc = this.dataChannels.get(peerDeviceId);
+      if (currentPc && (!currentDc || currentDc.readyState !== "open")) {
+        console.warn(`[WebRTC] Peer ${peerDeviceId} negotiation timed out (15s). Marking disconnected.`);
+        this.callbacks.onPeerStateChange?.(peerDeviceId, "disconnected");
+        this.closePeer(peerDeviceId);
+      }
+    }, 15000);
+    this.connectionTimeouts.set(peerDeviceId, timeout);
+
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         this.signaling.sendIceCandidate(peerDeviceId, event.candidate.toJSON());
@@ -180,6 +221,7 @@ export class WebRTCManager {
     pc.onconnectionstatechange = () => {
       console.log(`[WebRTC] Peer ${peerDeviceId} connectionState: ${pc.connectionState}`);
       if (pc.connectionState === "connected") {
+        this.clearConnectionTimeout(peerDeviceId);
         this.callbacks.onPeerStateChange?.(peerDeviceId, "connected");
       } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed") {
         this.callbacks.onPeerStateChange?.(peerDeviceId, "disconnected");
@@ -201,6 +243,7 @@ export class WebRTCManager {
 
     channel.onopen = () => {
       console.log(`[WebRTC] DataChannel OPEN with ${peerDeviceId}`);
+      this.clearConnectionTimeout(peerDeviceId);
       this.callbacks.onPeerConnected?.(peerDeviceId);
       this.callbacks.onPeerStateChange?.(peerDeviceId, "connected");
     };
@@ -401,7 +444,16 @@ export class WebRTCManager {
     const endPayload = JSON.stringify(endMsg);
     for (const { dc } of openChannels) dc.send(endPayload);
 
-    return true;
+    // 4. Wait for explicit receiver verification and confirmation (file-ack)
+    return new Promise<boolean>((resolve) => {
+      const timer = window.setTimeout(() => {
+        this.pendingTransferAcks.delete(transferId);
+        console.warn(`[WebRTC] Transfer ${transferId} confirmation timed out.`);
+        resolve(false);
+      }, 20000);
+
+      this.pendingTransferAcks.set(transferId, { resolve, timer });
+    });
   }
 
   // Handle incoming data packets
@@ -421,6 +473,12 @@ export class WebRTCManager {
         dc.send(JSON.stringify({ type: "text-ack", transferId: msg.transferId }));
       }
     } else if (msg.type === "text-ack" || msg.type === "file-ack") {
+      const pending = this.pendingTransferAcks.get(msg.transferId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pending.resolve(true);
+        this.pendingTransferAcks.delete(msg.transferId);
+      }
       this.callbacks.onTransferAcknowledged?.(msg.transferId);
     } else if (msg.type === "file-start") {
       this.incomingFiles.set(msg.transferId, {
@@ -455,6 +513,13 @@ export class WebRTCManager {
         }
 
         const blob = new Blob(byteArrays, { type: incoming.meta.mimeType });
+        
+        // Verify reconstructed size against header
+        if (blob.size !== incoming.meta.size) {
+          console.warn(`[WebRTC] Corrupted file transfer: expected ${incoming.meta.size} bytes, got ${blob.size} bytes`);
+          return;
+        }
+
         const downloadUrl = URL.createObjectURL(blob);
 
         this.callbacks.onFileReceived?.({
@@ -467,7 +532,7 @@ export class WebRTCManager {
           timestamp: Date.now(),
         });
 
-        // Send file-ack back to sender
+        // Send verified file-ack back to sender
         const dc = this.dataChannels.get(peerDeviceId);
         if (dc && dc.readyState === "open") {
           dc.send(JSON.stringify({ type: "file-ack", transferId: incoming.meta.transferId }));
