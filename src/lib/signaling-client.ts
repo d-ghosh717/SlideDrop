@@ -1,5 +1,7 @@
 import type { Device } from "./types";
 
+export type SignalingState = "idle" | "connecting" | "connected" | "reconnecting" | "offline";
+
 export interface SignalingEvent {
   timestamp: number;
   event: string;
@@ -7,9 +9,10 @@ export interface SignalingEvent {
 }
 
 export interface SignalingCallbacks {
+  onStateChange?: (state: SignalingState, detail?: string) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
-  onJoined?: (data: { channelCode: string; self: { id: string; name: string; platform: string }; devices: Device[] }) => void;
+  onJoined?: (data: { channelCode: string; self: { id: string; name: string; platform: string }; devices: Device[]; revision?: number }) => void;
   onMembersUpdated?: (data: { channelCode: string; revision: number; devices: Device[] }) => void;
   onDeviceUpdated?: (device: Device) => void;
   onOffer?: (data: { fromDeviceId: string; sdp: RTCSessionDescriptionInit }) => void;
@@ -23,7 +26,6 @@ export function getDefaultSignalingUrl(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_SIGNALING_URL) {
     return process.env.NEXT_PUBLIC_SIGNALING_URL;
   }
-  console.warn("NEXT_PUBLIC_SIGNALING_URL is not set. WebSocket signaling will fail.");
   return "";
 }
 
@@ -31,16 +33,21 @@ export class SignalingClient {
   private url: string;
   private ws: WebSocket | null = null;
   private callbacks: SignalingCallbacks;
+  
+  private state: SignalingState = "idle";
   private reconnectTimer: number | null = null;
   private pingInterval: number | null = null;
+  private watchdogInterval: number | null = null;
+  private reconnectAttempt = 0;
   private isExplicitlyClosed = false;
+  private lastServerActivity = Date.now();
+  private lastRevision = 0;
 
-  public currentChannel: string = "";
-  public currentDeviceId: string = "";
-  public currentDeviceName: string = "";
-  public currentPlatform: string = "browser";
+  public currentChannel = "";
+  public currentDeviceId = "";
+  public currentDeviceName = "";
+  public currentPlatform = "browser";
   public isConnected = false;
-  private lastRevision: number = 0;
 
   constructor(callbacks: SignalingCallbacks, customUrl?: string) {
     this.callbacks = callbacks;
@@ -49,6 +56,19 @@ export class SignalingClient {
 
   public getUrl(): string {
     return this.url;
+  }
+
+  public getState(): SignalingState {
+    return this.state;
+  }
+
+  private setState(nextState: SignalingState, detail?: string) {
+    if (this.state !== nextState) {
+      this.state = nextState;
+      this.isConnected = nextState === "connected";
+      this.logEvent(`state-${nextState}`, detail);
+      this.callbacks.onStateChange?.(nextState, detail);
+    }
   }
 
   private logEvent(event: string, detail?: string) {
@@ -63,22 +83,32 @@ export class SignalingClient {
     this.currentDeviceId = deviceId;
     this.currentDeviceName = deviceName;
     this.currentPlatform = platform;
-    this.lastRevision = 0;
 
-    if (this.ws) {
-      this.closeSocket();
+    if (!this.url) {
+      console.warn("[SignalingClient] No signaling URL configured.");
+      this.setState("offline", "No signaling URL");
+      return;
     }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    this.closeSocket();
+    this.setState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting", `url=${this.url}`);
+    this.logEvent("ws-connecting", `Connecting to ${this.url}`);
 
     try {
       this.ws = new WebSocket(this.url);
 
       this.ws.onopen = () => {
-        this.isConnected = true;
-        this.logEvent('ws-connected', `Connected to ${this.url}`);
+        this.lastServerActivity = Date.now();
+        this.logEvent("ws-connected", `Connected to ${this.url}`);
         this.callbacks.onConnected?.();
 
-        // Immediately join the requested channel
-        this.logEvent('join-sending', `channel=${this.currentChannel} device=${this.currentDeviceId} name=${this.currentDeviceName}`);
+        // Send deterministic join request with persistent deviceId and channelCode
+        this.logEvent("join-sending", `channel=${this.currentChannel} device=${this.currentDeviceId} name=${this.currentDeviceName}`);
         this.send({
           type: "join",
           channelCode: this.currentChannel,
@@ -87,11 +117,11 @@ export class SignalingClient {
           platform: this.currentPlatform,
         });
 
-        // Start ping heartbeat
         this.startHeartbeat();
       };
 
       this.ws.onmessage = (event) => {
+        this.lastServerActivity = Date.now();
         try {
           const msg = JSON.parse(event.data);
           this.handleMessage(msg);
@@ -100,23 +130,27 @@ export class SignalingClient {
         }
       };
 
-      this.ws.onclose = () => {
-        this.isConnected = false;
+      this.ws.onclose = (ev) => {
         this.stopHeartbeat();
-        this.logEvent('ws-disconnected', `Disconnected from ${this.url}`);
+        this.closeSocket();
         this.callbacks.onDisconnected?.();
+        this.logEvent("ws-disconnected", `Code: ${ev.code}, Reason: ${ev.reason || "none"}`);
 
         if (!this.isExplicitlyClosed) {
+          this.setState("reconnecting", `Attempt #${this.reconnectAttempt + 1}`);
           this.scheduleReconnect();
+        } else {
+          this.setState("idle", "Closed explicitly");
         }
       };
 
       this.ws.onerror = () => {
-        this.logEvent('ws-error', `WebSocket error on ${this.url}`);
+        this.logEvent("ws-error", `WebSocket connection failed on ${this.url}`);
       };
     } catch (err) {
-      console.warn("[SignalingClient] Connect attempt error:", err);
+      console.warn("[SignalingClient] Socket initialization error:", err);
       if (!this.isExplicitlyClosed) {
+        this.setState("reconnecting", "Init failed");
         this.scheduleReconnect();
       }
     }
@@ -124,15 +158,22 @@ export class SignalingClient {
 
   public send(data: object) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(data));
+      try {
+        this.ws.send(JSON.stringify(data));
+      } catch (err) {
+        console.warn("[SignalingClient] Failed to send message:", err);
+      }
     }
   }
 
   public switchChannel(newChannelCode: string) {
     const code = newChannelCode.trim().toUpperCase();
+    if (!code) return;
+
     this.currentChannel = code;
     this.lastRevision = 0;
-    if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.send({
         type: "join",
         channelCode: code,
@@ -156,6 +197,7 @@ export class SignalingClient {
   public leaveChannel() {
     this.send({ type: "leave" });
     this.currentChannel = "";
+    this.lastRevision = 0;
   }
 
   public sendOffer(targetDeviceId: string, sdp: RTCSessionDescriptionInit) {
@@ -193,6 +235,7 @@ export class SignalingClient {
       this.reconnectTimer = null;
     }
     this.closeSocket();
+    this.setState("idle", "Disconnected");
   }
 
   private closeSocket() {
@@ -211,9 +254,23 @@ export class SignalingClient {
 
   private startHeartbeat() {
     this.stopHeartbeat();
+
+    // 1. Send periodic ping every 10 seconds
     this.pingInterval = window.setInterval(() => {
       this.send({ type: "ping" });
     }, 10000);
+
+    // 2. Watchdog: if no message/pong received from server for >35s, treat connection as stale
+    this.watchdogInterval = window.setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        if (Date.now() - this.lastServerActivity > 35000) {
+          console.warn("[SignalingClient] Server heartbeat timeout (stale connection). Reconnecting...");
+          this.logEvent("watchdog-timeout", "No server response in 35s");
+          this.closeSocket();
+          this.scheduleReconnect();
+        }
+      }
+    }, 5000);
   }
 
   private stopHeartbeat() {
@@ -221,55 +278,102 @@ export class SignalingClient {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
     }
+    if (this.watchdogInterval) {
+      clearInterval(this.watchdogInterval);
+      this.watchdogInterval = null;
+    }
   }
 
   private scheduleReconnect() {
     if (this.reconnectTimer || this.isExplicitlyClosed) return;
+
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s + jitter
+    const baseDelay = Math.min(1000 * Math.pow(2, Math.min(this.reconnectAttempt, 5)), 30000);
+    const jitter = Math.floor(Math.random() * 500);
+    const delay = baseDelay + jitter;
+
+    this.reconnectAttempt++;
+    this.logEvent("schedule-reconnect", `Attempt #${this.reconnectAttempt} in ${delay}ms`);
+
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.isExplicitlyClosed && this.currentChannel && this.currentDeviceId) {
-        console.log("[SignalingClient] Attempting reconnect to", this.url);
+        console.log(`[SignalingClient] Executing reconnect attempt #${this.reconnectAttempt}...`);
         this.connect(this.currentChannel, this.currentDeviceId, this.currentDeviceName, this.currentPlatform);
       }
-    }, 3000);
+    }, delay);
   }
 
   private handleMessage(msg: {
     type: string;
     channelCode?: string;
+    deviceId?: string;
     revision?: number;
+    code?: string;
     self?: { id: string; name: string; platform: string };
     devices?: Array<{ id: string; name: string; platform: string; joinedAt?: number }>;
+    members?: Array<{ id: string; name: string; platform: string; joinedAt?: number }>;
     device?: { id: string; name: string; platform: string; joinedAt?: number };
-    deviceId?: string;
     fromDeviceId?: string;
     sdp?: RTCSessionDescriptionInit;
     candidate?: RTCIceCandidateInit;
     message?: string;
   }) {
     switch (msg.type) {
-      case "joined": {
-        // Only fired when local-memory fallback occurs if not using broadcastMembers,
-        // but now broadcastMembers will just send `members`. We might still keep it for backwards comp.
-        this.logEvent('joined', `channel=${msg.channelCode}`);
+      case "join_ack": {
+        const rev = msg.revision || 0;
+        this.lastRevision = rev;
+        this.reconnectAttempt = 0; // Reset backoff on successful join
+        this.setState("connected", `Channel ${msg.channelCode} joined`);
+        this.logEvent("join_ack", `channel=${msg.channelCode} revision=${rev} peers=${(msg.members || []).length}`);
+
+        const rawMembers = msg.members || [];
+        const formattedDevices: Device[] = rawMembers.map((d) => ({
+          id: d.id,
+          userId: d.id,
+          accountId: msg.channelCode || this.currentChannel,
+          name: d.name,
+          type: d.platform || "browser",
+          pairingCode: msg.channelCode || this.currentChannel,
+          online: true,
+          state: "ONLINE",
+          lastSeen: d.joinedAt || Date.now(),
+          createdAt: d.joinedAt || Date.now(),
+        }));
+
         this.callbacks.onJoined?.({
           channelCode: msg.channelCode || this.currentChannel,
-          self: msg.self || { id: this.currentDeviceId, name: this.currentDeviceName, platform: this.currentPlatform },
-          devices: [],
+          self: { id: this.currentDeviceId, name: this.currentDeviceName, platform: this.currentPlatform },
+          devices: formattedDevices,
+          revision: rev,
         });
+
+        this.callbacks.onMembersUpdated?.({
+          channelCode: msg.channelCode || this.currentChannel,
+          revision: rev,
+          devices: formattedDevices,
+        });
+        break;
+      }
+
+      case "join_error": {
+        this.logEvent("join_error", `${msg.code}: ${msg.message}`);
+        this.callbacks.onError?.(msg.message || "Failed to join channel.");
         break;
       }
 
       case "members": {
         const rev = msg.revision || 0;
         if (rev <= this.lastRevision && rev !== 0) {
-          console.warn(`[SignalingClient] Ignoring stale members snapshot. Received revision ${rev}, current is ${this.lastRevision}`);
+          console.warn(`[SignalingClient] Discarding stale members snapshot (got rev ${rev}, have rev ${this.lastRevision})`);
           break;
         }
         this.lastRevision = rev;
+        this.reconnectAttempt = 0;
+        this.setState("connected", `Revision ${rev}`);
 
         const rawDevices = msg.devices || [];
-        this.logEvent('members', `channel=${msg.channelCode} revision=${rev} peers=${rawDevices.length}`);
+        this.logEvent("members", `channel=${msg.channelCode} revision=${rev} peers=${rawDevices.length}`);
         
         const formattedDevices: Device[] = rawDevices.map((d) => ({
           id: d.id,
@@ -314,7 +418,7 @@ export class SignalingClient {
 
       case "offer": {
         if (msg.fromDeviceId && msg.sdp) {
-          this.logEvent('offer-received', `from ${msg.fromDeviceId}`);
+          this.logEvent("offer-received", `from ${msg.fromDeviceId}`);
           this.callbacks.onOffer?.({ fromDeviceId: msg.fromDeviceId, sdp: msg.sdp });
         }
         break;
@@ -322,7 +426,7 @@ export class SignalingClient {
 
       case "answer": {
         if (msg.fromDeviceId && msg.sdp) {
-          this.logEvent('answer-received', `from ${msg.fromDeviceId}`);
+          this.logEvent("answer-received", `from ${msg.fromDeviceId}`);
           this.callbacks.onAnswer?.({ fromDeviceId: msg.fromDeviceId, sdp: msg.sdp });
         }
         break;
@@ -330,7 +434,7 @@ export class SignalingClient {
 
       case "ice-candidate": {
         if (msg.fromDeviceId && msg.candidate) {
-          this.logEvent('ice-candidate', `from ${msg.fromDeviceId}`);
+          this.logEvent("ice-candidate", `from ${msg.fromDeviceId}`);
           this.callbacks.onIceCandidate?.({ fromDeviceId: msg.fromDeviceId, candidate: msg.candidate });
         }
         break;
@@ -338,7 +442,7 @@ export class SignalingClient {
 
       case "error": {
         if (msg.message) {
-          this.logEvent('server-error', msg.message);
+          this.logEvent("server-error", msg.message);
           this.callbacks.onError?.(msg.message);
         }
         break;

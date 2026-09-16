@@ -45,7 +45,7 @@ import {
 } from "lucide-react";
 import { auth, db, storage } from "@/lib/firebase";
 import { SignalingClient, getDefaultSignalingUrl } from "@/lib/signaling-client";
-import type { SignalingEvent } from "@/lib/signaling-client";
+import type { SignalingEvent, SignalingState } from "@/lib/signaling-client";
 import { WebRTCManager } from "@/lib/webrtc";
 import { TransferManager } from "@/lib/transfer-manager";
 import type { Device, Transfer } from "@/lib/types";
@@ -61,6 +61,7 @@ const STORAGE_TRANSFERS = "slidedrop-transfers-history";
 type AppConnectionStatus =
   | "NOT_CONNECTED"
   | "CONNECTING_TO_SERVER"
+  | "RECONNECTING"
   | "CHANNEL_JOINED"
   | "DEVICE_DISCOVERED"
   | "CONNECTING_PEER"
@@ -180,7 +181,7 @@ function renderFileThumbnail(mimeType = "", filename = "", downloadUrl = "") {
 function generateRandomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let result = "";
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
     const randomBytes = new Uint8Array(6);
     crypto.getRandomValues(randomBytes);
     for (let i = 0; i < 6; i++) {
@@ -195,8 +196,11 @@ function generateRandomCode(): string {
 }
 
 function generatePersistentId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `dev_${crypto.randomUUID().slice(0, 8)}`;
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(4);
+    crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+    return `dev_${hex}`;
   }
   return `dev_${Math.random().toString(36).substring(2, 10)}`;
 }
@@ -271,16 +275,22 @@ function getInitialChannelCode(): string {
   const params = new URLSearchParams(window.location.search);
   const fromUrl = params.get("channel") || params.get("code") || params.get("join");
   if (fromUrl) {
-    const norm = fromUrl.trim().toUpperCase();
-    localStorage.setItem(STORAGE_CHANNEL_CODE, norm);
-    return norm;
+    const norm = fromUrl.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+    if (norm.length >= 3) {
+      localStorage.setItem(STORAGE_CHANNEL_CODE, norm);
+      return norm;
+    }
   }
   let stored = localStorage.getItem(STORAGE_CHANNEL_CODE);
-  if (!stored) {
-    stored = generateRandomCode();
-    localStorage.setItem(STORAGE_CHANNEL_CODE, stored);
+  if (stored) {
+    const norm = stored.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+    if (norm.length >= 3) {
+      return norm;
+    }
   }
-  return stored;
+  const fresh = generateRandomCode();
+  localStorage.setItem(STORAGE_CHANNEL_CODE, fresh);
+  return fresh;
 }
 
 function getInitialTransfers(): Transfer[] {
@@ -309,6 +319,7 @@ export default function Home() {
 
   // 3. WebSocket Signaling & Peer Presence States
   const [isWsConnected, setIsWsConnected] = useState(false);
+  const [signalingState, setSignalingState] = useState<SignalingState>("idle");
   const [remoteMembers, setRemoteMembers] = useState<Map<string, Device>>(new Map());
   const [peerStates, setPeerStates] = useState<Map<string, "connecting" | "connected" | "disconnected">>(new Map());
 
@@ -479,6 +490,13 @@ export default function Home() {
     };
 
     const signaling = new SignalingClient({
+      onStateChange: (state) => {
+        setSignalingState(state);
+        setIsWsConnected(state === "connected");
+        if (state === "connected") {
+          setErrorMessage(null);
+        }
+      },
       onConnected: () => {
         setIsWsConnected(true);
         setSignalingUrl(signaling.getUrl());
@@ -649,7 +667,9 @@ export default function Home() {
   }, [peerStates]);
 
   const currentStatus: AppConnectionStatus = useMemo(() => {
-    if (!isWsConnected) return "CONNECTING_TO_SERVER";
+    if (signalingState === "reconnecting") return "RECONNECTING";
+    if (signalingState === "offline") return "OFFLINE";
+    if (signalingState === "connecting" || !isWsConnected) return "CONNECTING_TO_SERVER";
     if (transferProgress !== null && transferProgress > 0 && transferProgress < 100) return "TRANSFERRING";
     if (connectedPeerIds.length > 0) return "P2P_CONNECTED";
     if (otherDevices.length > 0) {
@@ -657,7 +677,7 @@ export default function Home() {
       return isAnyConnecting ? "CONNECTING_PEER" : "DEVICE_DISCOVERED";
     }
     return "CHANNEL_JOINED";
-  }, [isWsConnected, transferProgress, connectedPeerIds, otherDevices, peerStates]);
+  }, [signalingState, isWsConnected, transferProgress, connectedPeerIds, otherDevices, peerStates]);
 
   // Rename Device Handler
   const handleSaveName = () => {
@@ -679,9 +699,9 @@ export default function Home() {
   // Join Specific Channel Handler
   const handleJoinChannel = (targetCode?: string) => {
     const raw = targetCode || channelInput;
-    const code = raw.trim().toUpperCase();
-    if (!code || code.length < 3) {
-      setNotice({ text: "Please enter a valid channel code (3-12 characters).", type: "warning" });
+    const code = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!code || code.length < 3 || code.length > 12) {
+      setNotice({ text: "Please enter a valid channel code (3-12 alphanumeric characters).", type: "warning" });
       return;
     }
 
@@ -725,6 +745,8 @@ export default function Home() {
     webrtcRef.current?.closeAllPeers();
     setRemoteMembers(new Map());
     setPeerStates(new Map());
+    setChannelCode("");
+    localStorage.removeItem(STORAGE_CHANNEL_CODE);
     if (signalingRef.current) {
       signalingRef.current.leaveChannel();
     }
@@ -978,17 +1000,17 @@ export default function Home() {
             >
               <span
                 className={`${styles.statusDot} ${
-                  currentStatus === "P2P_CONNECTED"
+                  currentStatus === "P2P_CONNECTED" || currentStatus === "CHANNEL_JOINED" || currentStatus === "DEVICE_DISCOVERED"
                     ? styles.statusDotOnline
-                    : currentStatus === "TRANSFERRING"
+                    : currentStatus === "TRANSFERRING" || currentStatus === "CONNECTING_TO_SERVER" || currentStatus === "RECONNECTING" || currentStatus === "CONNECTING_PEER"
                     ? styles.statusDotConnecting
-                    : currentStatus === "CHANNEL_JOINED" || currentStatus === "DEVICE_DISCOVERED"
-                    ? styles.statusDotOnline
                     : styles.statusDotOffline
                 }`}
               />
               <span>
-                {currentStatus === "P2P_CONNECTED"
+                {currentStatus === "RECONNECTING"
+                  ? "Reconnecting..."
+                  : currentStatus === "P2P_CONNECTED"
                   ? `P2P Direct (${connectedPeerIds.length})`
                   : currentStatus === "TRANSFERRING"
                   ? `Transferring (${transferProgress || 0}%)`
@@ -1012,6 +1034,16 @@ export default function Home() {
             </button>
           </div>
         </header>
+
+        {/* Reconnecting Alert */}
+        {currentStatus === "RECONNECTING" && (
+          <div className={`${styles.noticeBanner} ${styles.noticeInfo}`} role="status">
+            <div className={styles.noticeContent}>
+              <Info size={18} />
+              <span>Reconnecting to SlideDrop signaling...</span>
+            </div>
+          </div>
+        )}
 
         {/* Notifications & System Alerts */}
         {errorMessage && (

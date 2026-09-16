@@ -49,7 +49,7 @@ const server = http.createServer((req, res) => {
       JSON.stringify({
         status: "ok",
         service: "SlideDrop WebSocket Signaling Server",
-        uptime: process.uptime(),
+        uptime: Math.floor(process.uptime()),
         totalChannels,
         totalDevices,
         firestoreSyncEnabled: !!firestore,
@@ -75,39 +75,61 @@ function normalizeChannel(code: unknown): string {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
 }
 
-function broadcastMembers(code: string) {
+function getChannelRevision(code: string): number {
+  return channelRevisions.get(code) || 0;
+}
+
+function incrementChannelRevision(code: string): number {
+  const rev = (channelRevisions.get(code) || 0) + 1;
+  channelRevisions.set(code, rev);
+  return rev;
+}
+
+function getChannelMembersList(code: string): DeviceInfo[] {
+  const room = localChannels.get(code);
+  if (!room) return [];
+
+  const allDevicesMap = new Map<string, DeviceInfo>();
+  
+  // 1. Cross-instance members from Firestore (if configured)
+  const sync = firestoreSyncs.get(code);
+  if (sync) {
+    const syncDevices = sync.getAllMembers();
+    for (const d of syncDevices) {
+      allDevicesMap.set(d.id, d);
+    }
+  }
+
+  // 2. In-memory local sessions are authoritative and override any stale remote record
+  for (const p of room.values()) {
+    if (p.deviceId) {
+      allDevicesMap.set(p.deviceId, {
+        id: p.deviceId,
+        name: p.deviceName,
+        platform: p.platform,
+        joinedAt: p.joinedAt,
+      });
+    }
+  }
+
+  return Array.from(allDevicesMap.values());
+}
+
+function broadcastMembers(code: string, incrementRev = true) {
   if (!localChannels.has(code)) return;
   const room = localChannels.get(code)!;
   
-  let revision = (channelRevisions.get(code) || 0) + 1;
-  channelRevisions.set(code, revision);
+  const revision = incrementRev ? incrementChannelRevision(code) : getChannelRevision(code);
+  const devices = getChannelMembersList(code);
 
-  const sync = firestoreSyncs.get(code);
-  const allDevicesMap = new Map<string, DeviceInfo>();
-  
-  if (sync) {
-    const syncDevices = sync.getAllMembers();
-    for (const d of syncDevices) allDevicesMap.set(d.id, d);
-  }
-  
-  for (const p of room.values()) {
-    allDevicesMap.set(p.deviceId, {
-      id: p.deviceId,
-      name: p.deviceName,
-      platform: p.platform,
-      joinedAt: p.joinedAt,
-    });
-  }
-  
-  const devices = Array.from(allDevicesMap.values());
-  console.log(`[CHANNEL] ${code} revision=${revision} members=${devices.length} devices=${devices.map(d => d.id).join(",")}`);
-  
+  console.log(`[CHANNEL] revision=${revision} members=${devices.length} code=${code} devices=${devices.map(d => d.id).join(",")}`);
+
   for (const session of room.values()) {
     const peers = devices.filter(d => d.id !== session.deviceId);
     sendJson(session.ws, {
       type: "members",
       channelCode: code,
-      revision: revision,
+      revision,
       devices: peers,
     });
   }
@@ -118,16 +140,13 @@ function getOrCreateFirestoreSync(code: string): FirestoreChannelSync | null {
   if (!firestoreSyncs.has(code)) {
     const sync = new FirestoreChannelSync(
       code,
-      (member) => {
-        // onMemberAdded
-        broadcastMembers(code);
+      () => {
+        broadcastMembers(code, true);
       },
-      (deviceId) => {
-        // onMemberRemoved
-        broadcastMembers(code);
+      () => {
+        broadcastMembers(code, true);
       },
       (msg) => {
-        // onMessage
         const room = localChannels.get(code);
         if (room && msg.targetDeviceId) {
           const targetSession = room.get(msg.targetDeviceId);
@@ -156,23 +175,23 @@ function removeSessionFromChannel(session: DeviceSession) {
   const room = localChannels.get(channelCode);
   if (room) {
     room.delete(deviceId);
-    console.log(`[WS] disconnect ${deviceId}`);
+    console.log(`[CHANNEL] leave code=${channelCode} device=${deviceId || "anon"} remaining=${room.size}`);
 
     const sync = firestoreSyncs.get(channelCode);
-    if (sync) {
+    if (sync && deviceId) {
       sync.unregisterLocalDevice(deviceId);
-    } else {
-      broadcastMembers(channelCode);
     }
 
-    // Clean up empty channels
     if (room.size === 0) {
       localChannels.delete(channelCode);
+      channelRevisions.delete(channelCode);
       if (sync) {
         sync.stop();
         firestoreSyncs.delete(channelCode);
       }
-      console.log(`[Clean] Channel ${channelCode} is empty and was removed.`);
+      console.log(`[CHANNEL] Cleaned up empty channel ${channelCode}`);
+    } else {
+      broadcastMembers(channelCode, true);
     }
   }
 
@@ -189,11 +208,9 @@ async function forwardSignalingMessage(session: DeviceSession, msg: any, type: s
 
   const room = localChannels.get(code)!;
   const targetSession = room.get(targetDeviceId);
-  
   const payload = sdp ? { sdp } : candidate ? { candidate } : {};
 
   if (targetSession) {
-    // Fast path: target is connected to the same instance
     sendJson(targetSession.ws, {
       ...payload,
       type,
@@ -202,20 +219,19 @@ async function forwardSignalingMessage(session: DeviceSession, msg: any, type: s
       targetDeviceId,
     });
   } else {
-    // Try Firestore pubsub
     const sync = firestoreSyncs.get(code);
     if (sync) {
       const sent = await sync.sendMessage(targetDeviceId, fromDeviceId || session.deviceId, type, payload);
       if (!sent) {
-        console.warn(`[Warn] Failed to route ${type} to ${targetDeviceId}`);
+        console.warn(`[WARN] Failed to route ${type} to ${targetDeviceId}`);
       }
     }
   }
 }
 
 wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
-  const clientIp = req.socket.remoteAddress;
-  console.log(`[WS] connected ${clientIp}`);
+  const clientIp = req.socket.remoteAddress || "unknown";
+  console.log(`[WS] connected remote=${clientIp}`);
 
   const session: DeviceSession = {
     ws,
@@ -240,6 +256,10 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
       const msg = JSON.parse(raw.toString());
       const { type } = msg;
 
+      // Keepalive activity
+      session.isAlive = true;
+      session.lastPing = Date.now();
+
       switch (type) {
         case "join": {
           const rawCode = msg.channelCode;
@@ -249,15 +269,16 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
           const platform = typeof msg.platform === "string" ? msg.platform : "browser";
 
           if (!code || code.length < 3) {
-            sendJson(ws, { type: "error", message: "Invalid channel code." });
+            sendJson(ws, { type: "join_error", code: "INVALID_CHANNEL", message: "Invalid channel code (must be 3-12 alphanumeric characters)." });
             return;
           }
 
           if (!rawDeviceId) {
-            sendJson(ws, { type: "error", message: "Missing required deviceId." });
+            sendJson(ws, { type: "join_error", code: "MISSING_DEVICE_ID", message: "Missing required deviceId." });
             return;
           }
 
+          // If session was previously in a different channel, leave it first
           if (session.channelCode && session.channelCode !== code) {
             removeSessionFromChannel(session);
           }
@@ -274,18 +295,22 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
           }
           const room = localChannels.get(code)!;
           
+          // If the same device reconnected from another socket, close old socket cleanly
           const existing = room.get(rawDeviceId);
           if (existing && existing.ws !== ws) {
-            sendJson(existing.ws, { type: "error", message: "Device reconnected." });
-            existing.ws.close();
+            console.log(`[WS] Replacing existing socket for device ${rawDeviceId}`);
+            sendJson(existing.ws, { type: "error", message: "Device reconnected from a new session." });
+            socketSessions.delete(existing.ws);
+            existing.ws.close(1000, "Reconnected");
           }
 
           room.set(rawDeviceId, session);
-          console.log(`[WS] register ${session.deviceId} ${session.deviceName}`);
-          console.log(`[CHANNEL] ${session.deviceId} joined ${code}`);
+          const revision = incrementChannelRevision(code);
+
+          console.log(`[WS] register device=${session.deviceId} name=${session.deviceName} platform=${session.platform}`);
+          console.log(`[CHANNEL] join code=${code} device=${session.deviceId} revision=${revision}`);
 
           const sync = getOrCreateFirestoreSync(code);
-          
           if (sync) {
             await sync.registerLocalDevice({
               id: session.deviceId,
@@ -293,24 +318,37 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
               platform: session.platform,
               joinedAt: session.joinedAt
             });
-            // sync.registerLocalDevice triggers onMemberAdded internally?
-            // No, it doesn't trigger for the device itself locally in firestore-sync
           }
+
+          // Send explicit JOIN_ACK with current members to joining client
+          const allMembers = getChannelMembersList(code);
+          const peers = allMembers.filter(d => d.id !== session.deviceId);
           
-          // Broadcast members directly to all devices in the channel
-          broadcastMembers(code);
+          sendJson(ws, {
+            type: "join_ack",
+            channelCode: code,
+            deviceId: session.deviceId,
+            revision,
+            members: peers,
+          });
+          
+          // Broadcast updated member snapshot to ALL members
+          broadcastMembers(code, false);
           break;
         }
+
         case "leave": {
           removeSessionFromChannel(session);
           sendJson(ws, { type: "left" });
           break;
         }
+
         case "rename": {
           const newName = typeof msg.deviceName === "string" ? msg.deviceName.trim().slice(0, 50) : "";
-          if (newName) {
+          if (newName && session.deviceId) {
             session.deviceName = newName;
             const code = session.channelCode;
+            console.log(`[WS] rename device=${session.deviceId} newName=${newName}`);
             
             const sync = firestoreSyncs.get(code);
             if (sync) {
@@ -322,17 +360,19 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
               });
             }
             if (code) {
-              broadcastMembers(code);
+              broadcastMembers(code, true);
             }
           }
           break;
         }
+
         case "offer":
         case "answer":
         case "ice-candidate": {
           await forwardSignalingMessage(session, msg, type);
           break;
         }
+
         case "ping": {
           session.isAlive = true;
           session.lastPing = Date.now();
@@ -341,25 +381,26 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
         }
       }
     } catch (err) {
-      console.error("[Error] Failed to process incoming message:", err);
+      console.error("[ERROR] Failed to process incoming message:", err);
     }
   });
 
-  ws.on("close", () => {
-    console.log(`[Disconnect] Client ${session.deviceName} (${session.deviceId || "unregistered"}) disconnected`);
+  ws.on("close", (code, reason) => {
+    console.log(`[WS] disconnected device=${session.deviceId || "unregistered"} code=${code} reason=${reason.toString() || "none"}`);
     removeSessionFromChannel(session);
     socketSessions.delete(ws);
   });
 
   ws.on("error", (err: Error) => {
-    console.warn(`[Socket Error] ${session.deviceId}:`, err.message);
+    console.warn(`[WS ERROR] ${session.deviceId || "unregistered"}:`, err.message);
   });
 });
 
+// Periodic heartbeat watchdog to prune dead/stale connections (every 15s)
 const heartbeatInterval = setInterval(() => {
   for (const [ws, session] of socketSessions.entries()) {
     if (!session.isAlive) {
-      console.log(`[Timeout] Terminating inactive socket for device ${session.deviceId}`);
+      console.log(`[TIMEOUT] Terminating stale socket for device=${session.deviceId || "unregistered"}`);
       removeSessionFromChannel(session);
       socketSessions.delete(ws);
       ws.terminate();
@@ -373,6 +414,39 @@ const heartbeatInterval = setInterval(() => {
 wss.on("close", () => {
   clearInterval(heartbeatInterval);
 });
+
+// Graceful shutdown on SIGTERM / SIGINT
+function gracefulShutdown(signal: string) {
+  console.log(`\n[SHUTDOWN] Received ${signal}. Closing signaling server cleanly...`);
+  clearInterval(heartbeatInterval);
+
+  for (const [ws, session] of socketSessions.entries()) {
+    try {
+      sendJson(ws, { type: "shutdown", message: "Server shutting down." });
+      ws.close(1001, "Server shutdown");
+    } catch {}
+  }
+  socketSessions.clear();
+  localChannels.clear();
+
+  for (const sync of firestoreSyncs.values()) {
+    sync.stop();
+  }
+  firestoreSyncs.clear();
+
+  server.close(() => {
+    console.log("[SHUTDOWN] HTTP/WS server closed successfully.");
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    console.error("[SHUTDOWN] Force exiting after timeout.");
+    process.exit(1);
+  }, 5000).unref();
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 server.listen(PORT, HOST, () => {
   console.log(`=======================================================`);
