@@ -1,19 +1,22 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import styles from "./TransferOverlay.module.css";
 import {
-  ArrowRight,
-  Zap,
-  Cloud,
+  Laptop,
+  Smartphone,
   Check,
   AlertTriangle,
   FileText,
   Image as ImageIcon,
   Film,
   File,
-  Send,
-  DownloadCloud
+  RotateCcw,
+  X,
+  ShieldCheck,
+  Zap,
+  Infinity as InfinityIcon,
+  Lock
 } from "lucide-react";
 
 export type TransferOverlayState =
@@ -65,15 +68,63 @@ export function TransferOverlay({
   onRetry,
   onClose,
 }: TransferOverlayProps) {
-  // Auto-close on completed state after 1.8 seconds
+  // Speed & ETA estimation
+  const [etaText, setEtaText] = useState<string>("");
+  const lastTimeRef = useRef<number>(Date.now());
+  const lastBytesRef = useRef<number>(0);
+  const speedRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!isOpen || state !== "sending" && state !== "receiving") {
+      lastBytesRef.current = 0;
+      setEtaText("");
+      return;
+    }
+
+    const now = Date.now();
+    const timeDelta = (now - lastTimeRef.current) / 1000;
+
+    if (timeDelta >= 0.5) {
+      const bytesDelta = transferredBytes - lastBytesRef.current;
+      if (bytesDelta > 0) {
+        const currentSpeed = bytesDelta / timeDelta;
+        // Exponential moving average for smooth speed
+        speedRef.current = speedRef.current === 0 ? currentSpeed : speedRef.current * 0.7 + currentSpeed * 0.3;
+        const remainingBytes = Math.max(0, totalBytes - transferredBytes);
+        if (speedRef.current > 0 && remainingBytes > 0) {
+          const secondsLeft = Math.ceil(remainingBytes / speedRef.current);
+          if (secondsLeft > 60) {
+            setEtaText(`~${Math.ceil(secondsLeft / 60)}m left`);
+          } else {
+            setEtaText(`~${secondsLeft}s left`);
+          }
+        }
+      }
+      lastTimeRef.current = now;
+      lastBytesRef.current = transferredBytes;
+    }
+  }, [isOpen, state, transferredBytes, totalBytes]);
+
+  // Auto-close on completed state after 2.2 seconds
   useEffect(() => {
     if (state === "completed" && isOpen && onClose) {
       const timer = setTimeout(() => {
         onClose();
-      }, 1800);
+      }, 2200);
       return () => clearTimeout(timer);
     }
   }, [state, isOpen, onClose]);
+
+  // Handle ESC key to dismiss completed or failed screens
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen && (state === "completed" || state === "failed" || state === "cancelled")) {
+        if (onClose) onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, state, onClose]);
 
   if (!isOpen) return null;
 
@@ -81,187 +132,271 @@ export function TransferOverlay({
   const isFailed = state === "failed" || state === "cancelled";
   const isSending = direction === "send";
   const displayPercent = Math.min(100, Math.max(0, Math.round(percent)));
+  const transportLabel = transportMethod === "p2p" ? "Direct P2P" : "Secure Relay";
 
-  const badgeText = isCompleted
-    ? "Transfer Complete"
-    : isFailed
-    ? state === "cancelled"
-      ? "Transfer Cancelled"
-      : "Transfer Interrupted"
-    : state === "preparing"
-    ? "Preparing Transfer..."
-    : state === "verifying"
-    ? "Verifying Integrity..."
+  // Dynamic titles
+  const targetDevice = isSending ? (recipientName || "Remote Device") : (senderName || "Remote Device");
+  const actionTitle = state === "preparing"
+    ? `Connecting to ${targetDevice}...`
     : isSending
-    ? "Launching Transfer..."
-    : "Receiving Data...";
+    ? `Sending files to ${targetDevice}...`
+    : `Receiving files from ${targetDevice}...`;
 
   return (
     <div
       className={styles.overlayBackdrop}
       role="dialog"
       aria-modal="true"
-      aria-label="File Transfer In Progress"
+      aria-label="SlideDrop File Transfer"
     >
-      <div className={styles.ambientGlow} />
+      {/* Background Cosmic Atmosphere */}
+      <div className={styles.cosmicBg}>
+        <div className={styles.starField} />
+        <div className={styles.planetArc} />
+        <div className={styles.ambientGlowLeft} />
+        <div className={styles.ambientGlowRight} />
+      </div>
 
-      <div className={styles.overlayCard}>
-        {/* Status Badge */}
-        <div
-          className={`${styles.statusBadge} ${
-            isCompleted ? styles.completed : isFailed ? styles.failed : ""
-          }`}
-        >
-          {isCompleted ? (
-            <Check size={14} strokeWidth={3} />
-          ) : isFailed ? (
-            <AlertTriangle size={14} strokeWidth={2.5} />
-          ) : isSending ? (
-            <Send size={13} />
-          ) : (
-            <DownloadCloud size={13} />
-          )}
-          <span>{badgeText}</span>
-        </div>
+      {/* Header Info */}
+      {!isCompleted && !isFailed && (
+        <header className={styles.headerSection}>
+          <h1 className={styles.mainTitle}>
+            {state === "preparing" ? "Connecting to " : isSending ? "Sending files to " : "Receiving files from "}
+            <span className={styles.deviceHighlight}>{targetDevice}</span>
+            ...
+          </h1>
+          <p className={styles.subtitle}>
+            <span>{itemsSummary || "1 file"}</span>
+            {totalBytes > 0 && (
+              <>
+                <span className={styles.subtitleDot}>•</span>
+                <span>{formatSize(totalBytes)}</span>
+              </>
+            )}
+            <span className={styles.subtitleDot}>•</span>
+            <span>{transportLabel}</span>
+          </p>
+        </header>
+      )}
 
-        {/* Sender -> Recipient Header */}
-        <h2 className={styles.routeTitle}>
-          <span>{senderName || "This Device"}</span>
-          <ArrowRight size={18} className={styles.routeArrow} />
-          <span>{recipientName || "Remote Device"}</span>
-        </h2>
-
-        {/* Item Summary Subtitle */}
-        <p className={styles.fileSummarySubtext}>
-          {itemsSummary}
-          {totalBytes > 0 && ` • ${formatSize(totalBytes)}`}
-        </p>
-
-        {/* Visual Stage */}
-        <div className={styles.animationStage}>
-          {isCompleted ? (
-            <div className={styles.successCheckCircle}>
-              <Check size={48} strokeWidth={3.5} />
+      {/* Center Cinematic Stage */}
+      {!isCompleted && !isFailed && (
+        <main className={styles.stageContainer}>
+          {/* Sender Node (Left: Laptop) */}
+          <div className={styles.deviceNode}>
+            <div className={styles.deviceBadge}>
+              <Laptop size={14} color="#FF9F1C" />
+              <span>{isSending ? (senderName || "MacBook") : (senderName || "Remote Device")}</span>
             </div>
-          ) : isFailed ? (
-            <div className={styles.failedCircle}>
-              <AlertTriangle size={44} strokeWidth={3} />
-            </div>
-          ) : (
-            <>
-              {/* Receiver Portal Rings */}
-              {!isSending && (
-                <>
-                  <div className={styles.portalRing} />
-                  <div className={styles.portalGlow} />
-                </>
-              )}
-
-              {/* Sender Launch Pad */}
-              {isSending && <div className={styles.launchPad} />}
-
-              {/* Futuristic Capsule Vehicle */}
-              <div
-                className={`${styles.capsuleWrapper} ${
-                  isSending ? styles.sending : styles.receiving
-                }`}
-              >
-                <div className={styles.capsuleBody}>
-                  <div className={styles.capsuleGlass}>
-                    {transportMethod === "p2p" ? (
-                      <Zap size={20} strokeWidth={2.5} />
-                    ) : (
-                      <Cloud size={20} strokeWidth={2.5} />
-                    )}
-                  </div>
-                </div>
-                {/* Thruster Flame on Send */}
-                {isSending && <div className={styles.capsuleThruster} />}
+            <div className={styles.laptopWrapper}>
+              <div className={styles.laptopScreen}>
+                {/* Embedded SlideDrop Logo on screen */}
+                <svg width="24" height="24" viewBox="0 0 40 40" fill="none">
+                  <rect x="6" y="11" width="22" height="6" rx="3" fill="#FF9F1C" />
+                  <rect x="12" y="23" width="22" height="6" rx="3" fill="#FFC857" />
+                </svg>
               </div>
+              <div className={styles.laptopBase} />
+            </div>
+          </div>
 
-              {/* Floating File Badges */}
-              <div className={styles.floatingFiles}>
-                <div className={styles.floatingFileCard}>
-                  <ImageIcon size={13} />
-                  <span>Payload</span>
-                </div>
-                <div className={styles.floatingFileCard}>
-                  <FileText size={13} />
-                  <span>Data</span>
-                </div>
+          {/* Center Trajectory Stage */}
+          <div className={styles.trajectoryStage}>
+            {/* Plasma Trajectory Line */}
+            <div className={styles.plasmaBeam} />
+
+            {/* Floating File Badges */}
+            <div className={styles.travelFilesTrack}>
+              <div className={styles.travelCard} title="Image Payload">
+                <ImageIcon size={18} />
+                <span>IMG</span>
               </div>
-            </>
-          )}
-        </div>
-
-        {/* Progress & Real Byte Counters */}
-        {!isCompleted && !isFailed && (
-          <div className={styles.progressSection}>
-            <div className={styles.progressInfoRow}>
-              <span>{state === "verifying" ? "Checksum verification" : "Transferring"}</span>
-              <span className={styles.percentDisplay}>{displayPercent}%</span>
+              <div className={styles.travelCard} title="PDF Document">
+                <FileText size={18} />
+                <span>PDF</span>
+              </div>
+              <div className={styles.travelCard} title="Video Payload">
+                <Film size={18} />
+                <span>VID</span>
+              </div>
+              <div className={styles.travelCard} title="Document Data">
+                <File size={18} />
+                <span>DOC</span>
+              </div>
             </div>
 
+            {/* Futuristic SlideDrop Rocket Capsule */}
+            <div className={styles.capsuleRocket}>
+              <div className={styles.rocketFlame} />
+              <div className={styles.rocketBody}>
+                <div className={styles.rocketCockpit} />
+              </div>
+            </div>
+          </div>
+
+          {/* Destination Node (Right: Phone + Glowing Warp Portal) */}
+          <div className={styles.deviceNode}>
+            <div className={styles.deviceBadge}>
+              <Smartphone size={14} color="#FF9F1C" />
+              <span>{isSending ? (recipientName || "VIVO") : (recipientName || "This Device")}</span>
+            </div>
+            <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {/* Glowing Warp Portal Ring */}
+              <div className={styles.portalContainer}>
+                <div className={styles.portalRingOuter} />
+                <div className={styles.portalRingInner} />
+                <div className={styles.portalCore} />
+              </div>
+              {/* Phone Model */}
+              <div className={styles.phoneWrapper}>
+                <svg width="20" height="20" viewBox="0 0 40 40" fill="none">
+                  <rect x="6" y="11" width="22" height="6" rx="3" fill="#FF9F1C" />
+                  <rect x="12" y="23" width="22" height="6" rx="3" fill="#FFC857" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        </main>
+      )}
+
+      {/* HUD Progress Control Bar */}
+      {!isCompleted && !isFailed && (
+        <div className={styles.hudSection}>
+          <div className={styles.hudProgressRow}>
             <div className={styles.progressBarTrack}>
               <div
                 className={styles.progressBarFill}
                 style={{ width: `${displayPercent}%` }}
               />
             </div>
-
-            <div className={styles.metaInfoRow}>
-              <span>
-                {formatSize(transferredBytes)} / {formatSize(totalBytes)}
-              </span>
-              <span className={styles.transportTag}>
-                {transportMethod === "p2p" ? <Zap size={13} /> : <Cloud size={13} />}
-                {transportMethod === "p2p" ? "Direct P2P" : "Secure Relay"}
-              </span>
-            </div>
+            <div className={styles.percentLabel}>{displayPercent}%</div>
           </div>
-        )}
 
-        {/* Error Details */}
-        {isFailed && errorMessage && (
-          <p style={{ color: "#FCA5A5", fontSize: 13.5, marginBottom: 20 }}>
-            {errorMessage}
-          </p>
-        )}
+          <div className={styles.hudMetaRow}>
+            <span>
+              {formatSize(transferredBytes)} / {formatSize(totalBytes || transferredBytes)}
+            </span>
+            {etaText && (
+              <>
+                <span className={styles.subtitleDot}>•</span>
+                <span>{etaText}</span>
+              </>
+            )}
+            <span className={styles.subtitleDot}>•</span>
+            <span>{transportLabel}</span>
+          </div>
 
-        {/* Actions */}
-        <div className={styles.actionRow}>
-          {!isCompleted && !isFailed && onCancel && (
+          {onCancel && (
             <button
-              className={styles.cancelBtn}
+              className={styles.cancelTransferBtn}
               onClick={onCancel}
               type="button"
+              aria-label="Cancel active transfer"
             >
-              Cancel Transfer
+              <X size={15} />
+              <span>Cancel Transfer</span>
             </button>
           )}
+        </div>
+      )}
 
-          {isFailed && (
-            <>
-              {onRetry && isSending && (
-                <button
-                  className={styles.retryBtn}
-                  onClick={onRetry}
-                  type="button"
-                >
-                  Retry Transfer
-                </button>
-              )}
-              {onClose && (
-                <button
-                  className={styles.cancelBtn}
-                  onClick={onClose}
-                  type="button"
-                >
-                  Dismiss
-                </button>
-              )}
-            </>
+      {/* Completion View */}
+      {isCompleted && (
+        <div className={styles.successStage}>
+          <div className={styles.successBurstRings}>
+            <div className={styles.burstRing1} />
+            <div className={styles.burstRing2} />
+            <div className={styles.successCircle}>
+              <Check size={48} strokeWidth={3.5} />
+            </div>
+          </div>
+
+          <h2 className={styles.successTitle}>Transfer Complete!</h2>
+          <p className={styles.successSubtext}>
+            {itemsSummary || "Files"} {totalBytes > 0 && `(${formatSize(totalBytes)})`}{" "}
+            {isSending ? `sent to ${targetDevice}` : `received from ${targetDevice}`}
+          </p>
+
+          <div className={styles.travelFilesTrack} style={{ position: "static", transform: "none", gap: "12px" }}>
+            <div className={styles.travelCard}><ImageIcon size={18} /><span>IMG</span></div>
+            <div className={styles.travelCard}><FileText size={18} /><span>PDF</span></div>
+            <div className={styles.travelCard}><Film size={18} /><span>VID</span></div>
+            <div className={styles.travelCard}><File size={18} /><span>DOC</span></div>
+          </div>
+
+          {onClose && (
+            <button className={styles.viewFilesBtn} onClick={onClose} type="button">
+              View Files
+            </button>
           )}
+        </div>
+      )}
+
+      {/* Interrupted View */}
+      {isFailed && (
+        <div className={styles.interruptedStage}>
+          <div className={styles.interruptedCapsule}>
+            <AlertTriangle size={48} strokeWidth={2.8} />
+          </div>
+
+          <h2 className={styles.interruptedTitle}>Transfer Interrupted</h2>
+          <p className={styles.interruptedSubtext}>
+            {errorMessage || "Connection lost. Your files were not fully transferred."}
+          </p>
+
+          <div className={styles.interruptedActions}>
+            {onRetry && isSending && (
+              <button className={styles.retryBtn} onClick={onRetry} type="button">
+                <RotateCcw size={15} />
+                <span>Retry</span>
+              </button>
+            )}
+            {onClose && (
+              <button className={styles.cancelTransferBtn} onClick={onClose} type="button">
+                <X size={15} />
+                <span>Cancel</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Ambient Side Tagline (Bottom Left) */}
+      <div className={styles.ambientTagline}>
+        <span>FAST</span>
+        <span>PRIVATE</span>
+        <span>BEAUTIFUL</span>
+        <span className={styles.taglineSub}>— SLIDEDROP</span>
+      </div>
+
+      {/* Ambient Side Feature Badges (Bottom Right) */}
+      <div className={styles.ambientFeatures}>
+        <div className={styles.featureItem}>
+          <div className={styles.featureIconBox}>
+            <Lock size={13} />
+          </div>
+          <div>
+            <div className={styles.featureTitle}>Secure &amp; Private</div>
+            <div className={styles.featureDesc}>Direct P2P connection</div>
+          </div>
+        </div>
+        <div className={styles.featureItem}>
+          <div className={styles.featureIconBox}>
+            <InfinityIcon size={13} />
+          </div>
+          <div>
+            <div className={styles.featureTitle}>No File Size Limit</div>
+            <div className={styles.featureDesc}>Share anything</div>
+          </div>
+        </div>
+        <div className={styles.featureItem}>
+          <div className={styles.featureIconBox}>
+            <ShieldCheck size={13} />
+          </div>
+          <div>
+            <div className={styles.featureTitle}>End-to-End Encrypted</div>
+            <div className={styles.featureDesc}>Your files, your control</div>
+          </div>
         </div>
       </div>
     </div>

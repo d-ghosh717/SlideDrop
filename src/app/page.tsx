@@ -51,6 +51,7 @@ import { TransferManager } from "@/lib/transfer-manager";
 import type { Device, Transfer } from "@/lib/types";
 import { TransferOverlay } from "@/components/TransferOverlay";
 import type { TransferOverlayState } from "@/components/TransferOverlay";
+import { TransferToastContainer, type ToastItem } from "@/components/TransferToast";
 import styles from "./page.module.css";
 
 export const dynamic = "force-dynamic";
@@ -349,7 +350,7 @@ export default function Home() {
   const [transferProgress, setTransferProgress] = useState<number | null>(null);
   const [transferStatusText, setTransferStatusText] = useState<string>("");
   const [multiRecipientProgress, setMultiRecipientProgress] = useState<Map<string, { percent: number; status: string; method: string }>>(new Map());
-  const [recentReceived, setRecentReceived] = useState<Transfer | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [hasCopiedCode, setHasCopiedCode] = useState(false);
   const [hasCopiedLink, setHasCopiedLink] = useState(false);
@@ -444,6 +445,25 @@ export default function Home() {
     appendTransferRef.current = appendTransfer;
   }, [appendTransfer]);
 
+  // Floating Toast Notification Helper
+  const addToast = useCallback((transfer: Transfer) => {
+    const item: ToastItem = {
+      id: `${transfer.id}-${Date.now()}`,
+      transfer,
+      receivedAt: Date.now(),
+    };
+    setToasts((prev) => [item, ...prev.slice(0, 4)]);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const addToastRef = useRef(addToast);
+  useEffect(() => {
+    addToastRef.current = addToast;
+  }, [addToast]);
+
   // Firebase Anonymous Auth (Architecture B fallback)
   useEffect(() => {
     if (!auth) return;
@@ -505,7 +525,7 @@ export default function Home() {
           expiresAt: new Date(msg.timestamp + 86400000).toISOString(),
         };
         appendTransferRef.current(transfer);
-        setRecentReceived(transfer);
+        addToastRef.current(transfer);
         setNotice({ text: `Received note from ${msg.senderName}`, type: "success" });
       },
       onFileProgress: (transferId: string, percent: number, direction: "send" | "receive") => {
@@ -564,7 +584,7 @@ export default function Home() {
           expiresAt: new Date(fileTransfer.timestamp + 86400000).toISOString(),
         };
         appendTransferRef.current(transfer);
-        setRecentReceived(transfer);
+        addToastRef.current(transfer);
         setNotice({ text: `Received "${fileTransfer.filename}" from ${fileTransfer.senderName}`, type: "success" });
 
         setOverlayState((prev) => ({
@@ -746,7 +766,7 @@ export default function Home() {
                 expiresAt: new Date(Date.now() + 86400000).toISOString(),
               };
               appendTransfer(transfer);
-              setRecentReceived(transfer);
+              addToast(transfer);
               setNotice({
                 text: `Received ${data.textContent ? "note" : `"${data.filename}"`} from ${data.senderName} via Secure Relay`,
                 type: "success",
@@ -1253,86 +1273,6 @@ export default function Home() {
               <X size={16} />
             </button>
           </div>
-        )}
-
-        {/* Prominent Received Notification Card (File vs Text) */}
-        {recentReceived && (
-          recentReceived.textContent ? (
-            <div className={styles.receivedTextCard} role="status" aria-label="Text message received">
-              <div className={styles.receivedTextHeader}>
-                <div className={styles.receivedBadgeRow}>
-                  <MessageSquare size={14} />
-                  <span>Text Received</span>
-                  <span style={{ opacity: 0.7, textTransform: "none", fontWeight: 500 }}>
-                    • From <strong>{recentReceived.senderName}</strong> • {recentReceived.method === "p2p" ? "P2P Direct" : "Secure Relay"}
-                  </span>
-                </div>
-                <button
-                  className={styles.iconBtn}
-                  onClick={() => setRecentReceived(null)}
-                  title="Dismiss notification"
-                  aria-label="Dismiss notification"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              <blockquote className={styles.receivedTextQuote}>
-                &ldquo;{recentReceived.textContent}&rdquo;
-              </blockquote>
-              <div className={styles.receivedTextBottom}>
-                <span className={styles.receivedFileMeta}>
-                  {recentReceived.textContent.length} characters • {formatTime(recentReceived.createdAt)}
-                </span>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <button
-                    className={styles.primaryBtn}
-                    onClick={() => handleTransferAction(recentReceived)}
-                  >
-                    {copiedId === recentReceived.id ? <Check size={15} /> : <Copy size={15} />}
-                    <span>{copiedId === recentReceived.id ? "Copied" : "Copy Text"}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className={styles.receivedFileCard} role="status" aria-label="File received">
-              <div className={styles.receivedFileLeft}>
-                <div className={styles.receivedThumbnailBox}>
-                  {renderFileThumbnail(recentReceived.mimeType, recentReceived.filename, recentReceived.downloadUrl || recentReceived.fileData)}
-                </div>
-                <div className={styles.receivedDetails}>
-                  <div className={styles.receivedBadgeRow}>
-                    <CheckCircle2 size={13} />
-                    <span>File Received</span>
-                    <span style={{ opacity: 0.7, textTransform: "none", fontWeight: 500 }}>
-                      • {recentReceived.method === "p2p" ? "P2P Direct" : "Secure Relay"}
-                    </span>
-                  </div>
-                  <span className={styles.receivedFileName}>{recentReceived.filename}</span>
-                  <span className={styles.receivedFileMeta}>
-                    {formatBytes(recentReceived.size)} • From <strong>{recentReceived.senderName}</strong>
-                  </span>
-                </div>
-              </div>
-              <div className={styles.receivedActions}>
-                <button
-                  className={styles.primaryBtn}
-                  onClick={() => handleTransferAction(recentReceived)}
-                >
-                  <Download size={15} />
-                  <span>Download</span>
-                </button>
-                <button
-                  className={styles.iconBtn}
-                  onClick={() => setRecentReceived(null)}
-                  title="Dismiss"
-                  aria-label="Dismiss notification"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-          )
         )}
 
         {/* ==================================================
@@ -2148,6 +2088,15 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* ==================================================
+          FLOATING TOAST NOTIFICATIONS LAYER
+          ================================================== */}
+      <TransferToastContainer
+        toasts={toasts}
+        onDismiss={dismissToast}
+        onAction={handleTransferAction}
+      />
 
       {/* ==================================================
           FULLSCREEN REAL-TIME TRANSFER ANIMATION OVERLAY
