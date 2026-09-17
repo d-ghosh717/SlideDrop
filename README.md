@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/slidedrop-transfer.png" alt="SlideDrop transfer experience" width="100%">
+<img src="docs/slidedrop.png" alt="SlideDrop transfer experience" width="100%">
 
 # ⚡ SlideDrop
 
