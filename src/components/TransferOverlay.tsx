@@ -74,8 +74,15 @@ export function TransferOverlay({
   const lastBytesRef = useRef<number>(0);
   const speedRef = useRef<number>(0);
 
+  // Stable ref for onClose to guarantee auto-close timer fires
+  const onCloseRef = useRef(onClose);
   useEffect(() => {
-    if (!isOpen || state !== "sending" && state !== "receiving") {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // Real-time speed & ETA calculation
+  useEffect(() => {
+    if (!isOpen || (state !== "sending" && state !== "receiving")) {
       lastBytesRef.current = 0;
       setEtaText("");
       return;
@@ -88,7 +95,6 @@ export function TransferOverlay({
       const bytesDelta = transferredBytes - lastBytesRef.current;
       if (bytesDelta > 0) {
         const currentSpeed = bytesDelta / timeDelta;
-        // Exponential moving average for smooth speed
         speedRef.current = speedRef.current === 0 ? currentSpeed : speedRef.current * 0.7 + currentSpeed * 0.3;
         const remainingBytes = Math.max(0, totalBytes - transferredBytes);
         if (speedRef.current > 0 && remainingBytes > 0) {
@@ -105,26 +111,28 @@ export function TransferOverlay({
     }
   }, [isOpen, state, transferredBytes, totalBytes]);
 
-  // Auto-close on completed state after 2.2 seconds
+  // CRITICAL FIX: Auto-close on completed state after 1.8 seconds reliably
   useEffect(() => {
-    if (state === "completed" && isOpen && onClose) {
+    if (state === "completed" && isOpen) {
       const timer = setTimeout(() => {
-        onClose();
-      }, 2200);
+        if (onCloseRef.current) {
+          onCloseRef.current();
+        }
+      }, 1800);
       return () => clearTimeout(timer);
     }
-  }, [state, isOpen, onClose]);
+  }, [state, isOpen]);
 
   // Handle ESC key to dismiss completed or failed screens
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isOpen && (state === "completed" || state === "failed" || state === "cancelled")) {
-        if (onClose) onClose();
+        if (onCloseRef.current) onCloseRef.current();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, state, onClose]);
+  }, [isOpen, state]);
 
   if (!isOpen) return null;
 
@@ -136,11 +144,6 @@ export function TransferOverlay({
 
   // Dynamic titles
   const targetDevice = isSending ? (recipientName || "Remote Device") : (senderName || "Remote Device");
-  const actionTitle = state === "preparing"
-    ? `Connecting to ${targetDevice}...`
-    : isSending
-    ? `Sending files to ${targetDevice}...`
-    : `Receiving files from ${targetDevice}...`;
 
   return (
     <div
@@ -149,12 +152,23 @@ export function TransferOverlay({
       aria-modal="true"
       aria-label="SlideDrop File Transfer"
     >
-      {/* Background Cosmic Atmosphere */}
+      {/* ==================================================
+          PROCEDURAL SUBTLE ANIMATED BACKGROUND
+          ================================================== */}
       <div className={styles.cosmicBg}>
-        <div className={styles.starField} />
-        <div className={styles.planetArc} />
+        <div className={styles.orbitalGrid} />
         <div className={styles.ambientGlowLeft} />
         <div className={styles.ambientGlowRight} />
+        <div className={styles.particleLayer}>
+          <div className={styles.particle} />
+          <div className={styles.particle} />
+          <div className={styles.particle} />
+          <div className={styles.particle} />
+          <div className={styles.particle} />
+          <div className={styles.particle} />
+          <div className={styles.particle} />
+          <div className={styles.particle} />
+        </div>
       </div>
 
       {/* Header Info */}
@@ -205,48 +219,48 @@ export function TransferOverlay({
             {/* Plasma Trajectory Line */}
             <div className={styles.plasmaBeam} />
 
-            {/* Floating File Badges */}
+            {/* Traveling Frosted File Badges */}
             <div className={styles.travelFilesTrack}>
               <div className={styles.travelCard} title="Image Payload">
-                <ImageIcon size={18} />
+                <ImageIcon size={17} />
                 <span>IMG</span>
               </div>
               <div className={styles.travelCard} title="PDF Document">
-                <FileText size={18} />
+                <FileText size={17} />
                 <span>PDF</span>
               </div>
               <div className={styles.travelCard} title="Video Payload">
-                <Film size={18} />
+                <Film size={17} />
                 <span>VID</span>
               </div>
               <div className={styles.travelCard} title="Document Data">
-                <File size={18} />
+                <File size={17} />
                 <span>DOC</span>
               </div>
             </div>
 
-            {/* Futuristic SlideDrop Rocket Capsule */}
+            {/* Realistic SlideDrop Courier Capsule */}
             <div className={styles.capsuleRocket}>
-              <div className={styles.rocketFlame} />
-              <div className={styles.rocketBody}>
-                <div className={styles.rocketCockpit} />
+              <div className={styles.ionThruster} />
+              <div className={styles.courierCapsule}>
+                <div className={styles.capsuleSeam} />
+                <svg width="18" height="14" viewBox="0 0 36 36" fill="none" style={{ position: "relative", zIndex: 2 }}>
+                  <path d="M6 13.5H23C24.4 13.5 25.5 12.4 25.5 11H9C7.6 11 6.5 12.1 6 13.5Z" fill="#FF9F1C" />
+                  <path d="M30 22.5H13C11.6 22.5 10.5 23.6 10.5 25H27C28.4 25 29.5 23.9 30 22.5Z" fill="#FF6B35" />
+                </svg>
+                <div className={styles.capsuleSensorLens} />
               </div>
             </div>
           </div>
 
-          {/* Destination Node (Right: Phone + Glowing Warp Portal) */}
+          {/* Destination Node (Right: Phone + Ambient Light Ring) */}
           <div className={styles.deviceNode}>
             <div className={styles.deviceBadge}>
               <Smartphone size={14} color="#FF9F1C" />
               <span>{isSending ? (recipientName || "VIVO") : (recipientName || "This Device")}</span>
             </div>
             <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {/* Glowing Warp Portal Ring */}
-              <div className={styles.portalContainer}>
-                <div className={styles.portalRingOuter} />
-                <div className={styles.portalRingInner} />
-                <div className={styles.portalCore} />
-              </div>
+              <div className={styles.receiverLightRing} />
               {/* Phone Model */}
               <div className={styles.phoneWrapper}>
                 <svg width="20" height="20" viewBox="0 0 40 40" fill="none">
@@ -300,14 +314,14 @@ export function TransferOverlay({
         </div>
       )}
 
-      {/* Completion View */}
+      {/* Completion View (Auto-Closes in 1.8s) */}
       {isCompleted && (
         <div className={styles.successStage}>
           <div className={styles.successBurstRings}>
             <div className={styles.burstRing1} />
             <div className={styles.burstRing2} />
             <div className={styles.successCircle}>
-              <Check size={48} strokeWidth={3.5} />
+              <Check size={44} strokeWidth={3.5} />
             </div>
           </div>
 
@@ -318,14 +332,20 @@ export function TransferOverlay({
           </p>
 
           <div className={styles.travelFilesTrack} style={{ position: "static", transform: "none", gap: "12px" }}>
-            <div className={styles.travelCard}><ImageIcon size={18} /><span>IMG</span></div>
-            <div className={styles.travelCard}><FileText size={18} /><span>PDF</span></div>
-            <div className={styles.travelCard}><Film size={18} /><span>VID</span></div>
-            <div className={styles.travelCard}><File size={18} /><span>DOC</span></div>
+            <div className={styles.travelCard}><ImageIcon size={17} /><span>IMG</span></div>
+            <div className={styles.travelCard}><FileText size={17} /><span>PDF</span></div>
+            <div className={styles.travelCard}><Film size={17} /><span>VID</span></div>
+            <div className={styles.travelCard}><File size={17} /><span>DOC</span></div>
           </div>
 
           {onClose && (
-            <button className={styles.viewFilesBtn} onClick={onClose} type="button">
+            <button
+              className={styles.viewFilesBtn}
+              onClick={() => {
+                if (onCloseRef.current) onCloseRef.current();
+              }}
+              type="button"
+            >
               View Files
             </button>
           )}
@@ -336,7 +356,7 @@ export function TransferOverlay({
       {isFailed && (
         <div className={styles.interruptedStage}>
           <div className={styles.interruptedCapsule}>
-            <AlertTriangle size={48} strokeWidth={2.8} />
+            <AlertTriangle size={44} strokeWidth={2.8} />
           </div>
 
           <h2 className={styles.interruptedTitle}>Transfer Interrupted</h2>
@@ -352,9 +372,15 @@ export function TransferOverlay({
               </button>
             )}
             {onClose && (
-              <button className={styles.cancelTransferBtn} onClick={onClose} type="button">
+              <button
+                className={styles.cancelTransferBtn}
+                onClick={() => {
+                  if (onCloseRef.current) onCloseRef.current();
+                }}
+                type="button"
+              >
                 <X size={15} />
-                <span>Cancel</span>
+                <span>Close</span>
               </button>
             )}
           </div>
@@ -373,7 +399,7 @@ export function TransferOverlay({
       <div className={styles.ambientFeatures}>
         <div className={styles.featureItem}>
           <div className={styles.featureIconBox}>
-            <Lock size={13} />
+            <Lock size={12} />
           </div>
           <div>
             <div className={styles.featureTitle}>Secure &amp; Private</div>
@@ -382,7 +408,7 @@ export function TransferOverlay({
         </div>
         <div className={styles.featureItem}>
           <div className={styles.featureIconBox}>
-            <InfinityIcon size={13} />
+            <InfinityIcon size={12} />
           </div>
           <div>
             <div className={styles.featureTitle}>No File Size Limit</div>
@@ -391,7 +417,7 @@ export function TransferOverlay({
         </div>
         <div className={styles.featureItem}>
           <div className={styles.featureIconBox}>
-            <ShieldCheck size={13} />
+            <ShieldCheck size={12} />
           </div>
           <div>
             <div className={styles.featureTitle}>End-to-End Encrypted</div>

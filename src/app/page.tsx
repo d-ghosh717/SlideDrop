@@ -1128,6 +1128,20 @@ export default function Home() {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const handleCloseOverlay = useCallback(() => {
+    setOverlayState((prev) => ({ ...prev, isOpen: false }));
+  }, []);
+
+  const handleCancelOverlay = useCallback(() => {
+    setOverlayState((prev) => ({ ...prev, isOpen: false, state: "cancelled" }));
+    setNotice({ text: "Transfer cancelled.", type: "info" });
+  }, []);
+
+  const handleRetryOverlay = useCallback(() => {
+    setOverlayState((prev) => ({ ...prev, isOpen: false }));
+    handleSendFiles();
+  }, [handleSendFiles]);
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -2113,17 +2127,9 @@ export default function Home() {
         percent={overlayState.percent}
         transportMethod={overlayState.transportMethod}
         errorMessage={overlayState.errorMessage}
-        onCancel={() => {
-          setOverlayState((prev) => ({ ...prev, isOpen: false, state: "cancelled" }));
-          setNotice({ text: "Transfer cancelled.", type: "info" });
-        }}
-        onRetry={() => {
-          setOverlayState((prev) => ({ ...prev, isOpen: false }));
-          handleSendFiles();
-        }}
-        onClose={() => {
-          setOverlayState((prev) => ({ ...prev, isOpen: false }));
-        }}
+        onCancel={handleCancelOverlay}
+        onRetry={handleRetryOverlay}
+        onClose={handleCloseOverlay}
       />
     </div>
   );
