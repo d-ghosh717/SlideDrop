@@ -364,7 +364,7 @@ export class SignalingClient {
 
       case "members": {
         const rev = msg.revision || 0;
-        if (rev <= this.lastRevision && rev !== 0) {
+        if (rev < this.lastRevision && rev !== 0) {
           console.warn(`[SignalingClient] Discarding stale members snapshot (got rev ${rev}, have rev ${this.lastRevision})`);
           break;
         }

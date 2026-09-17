@@ -37,6 +37,18 @@ export class TransferManager {
     this.channelCode = channelCode;
   }
 
+  public updateChannel(code: string) {
+    this.channelCode = code;
+  }
+
+  public updateDeviceName(name: string) {
+    this.localDeviceName = name;
+  }
+
+  public updateUid(uid: string) {
+    this.localUid = uid;
+  }
+
   // Determine whether to use local P2P or remote Cloud Storage
   public canUseP2P(recipientId: string): boolean {
     if (!this.webrtc) return false;

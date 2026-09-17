@@ -310,14 +310,18 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
           console.log(`[WS] register device=${session.deviceId} name=${session.deviceName} platform=${session.platform}`);
           console.log(`[CHANNEL] join code=${code} device=${session.deviceId} revision=${revision}`);
 
-          const sync = getOrCreateFirestoreSync(code);
-          if (sync) {
-            await sync.registerLocalDevice({
-              id: session.deviceId,
-              name: session.deviceName,
-              platform: session.platform,
-              joinedAt: session.joinedAt
-            });
+          try {
+            const sync = getOrCreateFirestoreSync(code);
+            if (sync) {
+              await sync.registerLocalDevice({
+                id: session.deviceId,
+                name: session.deviceName,
+                platform: session.platform,
+                joinedAt: session.joinedAt
+              });
+            }
+          } catch (syncErr) {
+            console.warn(`[FirestoreSync] Failed to register device on join:`, syncErr);
           }
 
           // Send explicit JOIN_ACK with current members to joining client
@@ -366,14 +370,18 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
             const code = session.channelCode;
             console.log(`[WS] rename device=${session.deviceId} newName=${newName}`);
             
-            const sync = firestoreSyncs.get(code);
-            if (sync) {
-              await sync.registerLocalDevice({
-                id: session.deviceId,
-                name: session.deviceName,
-                platform: session.platform,
-                joinedAt: session.joinedAt
-              });
+            try {
+              const sync = firestoreSyncs.get(code);
+              if (sync) {
+                await sync.registerLocalDevice({
+                  id: session.deviceId,
+                  name: session.deviceName,
+                  platform: session.platform,
+                  joinedAt: session.joinedAt
+                });
+              }
+            } catch (syncErr) {
+              console.warn(`[FirestoreSync] Failed to register device on rename:`, syncErr);
             }
             if (code) {
               broadcastMembers(code, true);

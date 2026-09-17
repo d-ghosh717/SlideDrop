@@ -49,6 +49,8 @@ import type { SignalingEvent, SignalingState } from "@/lib/signaling-client";
 import { WebRTCManager } from "@/lib/webrtc";
 import { TransferManager } from "@/lib/transfer-manager";
 import type { Device, Transfer } from "@/lib/types";
+import { TransferOverlay } from "@/components/TransferOverlay";
+import type { TransferOverlayState } from "@/components/TransferOverlay";
 import styles from "./page.module.css";
 
 export const dynamic = "force-dynamic";
@@ -273,9 +275,17 @@ function getInitialDeviceName(): string {
 function getInitialChannelCode(): string {
   if (typeof window === "undefined") return "";
   const params = new URLSearchParams(window.location.search);
-  const fromUrl = params.get("channel") || params.get("code") || params.get("join");
+  const fromUrl = params.get("channel") || params.get("code") || params.get("join") || params.get("room");
   if (fromUrl) {
     const norm = fromUrl.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+    if (norm.length >= 3) {
+      localStorage.setItem(STORAGE_CHANNEL_CODE, norm);
+      return norm;
+    }
+  }
+  const pathParts = window.location.pathname.split("/").filter(Boolean);
+  if (pathParts.length >= 2 && (pathParts[0] === "channel" || pathParts[0] === "c" || pathParts[0] === "room")) {
+    const norm = pathParts[1].trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
     if (norm.length >= 3) {
       localStorage.setItem(STORAGE_CHANNEL_CODE, norm);
       return norm;
@@ -347,10 +357,59 @@ export default function Home() {
   const [signalingEvents, setSignalingEvents] = useState<SignalingEvent[]>([]);
   const [signalingUrl, setSignalingUrl] = useState<string>(() => (typeof window !== "undefined" ? getDefaultSignalingUrl() : ""));
 
+  // 6. Fullscreen Transfer Animation State & Text Viewer Modal
+  const [viewingTextNote, setViewingTextNote] = useState<Transfer | null>(null);
+  const [overlayState, setOverlayState] = useState<{
+    isOpen: boolean;
+    direction: "send" | "receive";
+    state: TransferOverlayState;
+    senderName: string;
+    recipientName: string;
+    itemsSummary: string;
+    totalBytes: number;
+    transferredBytes: number;
+    percent: number;
+    transportMethod: "p2p" | "storage";
+    errorMessage?: string;
+  }>({
+    isOpen: false,
+    direction: "send",
+    state: "preparing",
+    senderName: "",
+    recipientName: "",
+    itemsSummary: "",
+    totalBytes: 0,
+    transferredBytes: 0,
+    percent: 0,
+    transportMethod: "p2p",
+  });
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const signalingRef = useRef<SignalingClient | null>(null);
   const webrtcRef = useRef<WebRTCManager | null>(null);
   const transferManagerRef = useRef<TransferManager | null>(null);
+
+  // Mutable refs to prevent unnecessary socket tear-downs during renames or auth
+  const deviceNameRef = useRef(deviceName);
+  const channelCodeRef = useRef(channelCode);
+  const currentUserRef = useRef(currentUser);
+
+  useEffect(() => {
+    deviceNameRef.current = deviceName;
+    transferManagerRef.current?.updateDeviceName(deviceName);
+  }, [deviceName]);
+
+  useEffect(() => {
+    channelCodeRef.current = channelCode;
+    transferManagerRef.current?.updateChannel(channelCode);
+  }, [channelCode]);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+    if (currentUser?.uid) {
+      transferManagerRef.current?.updateUid(currentUser.uid);
+    }
+  }, [currentUser]);
 
   // Generate and manage local object URLs for multi-file previews
   useEffect(() => {
@@ -380,6 +439,11 @@ export default function Home() {
     });
   }, []);
 
+  const appendTransferRef = useRef(appendTransfer);
+  useEffect(() => {
+    appendTransferRef.current = appendTransfer;
+  }, [appendTransfer]);
+
   // Firebase Anonymous Auth (Architecture B fallback)
   useEffect(() => {
     if (!auth) return;
@@ -400,9 +464,9 @@ export default function Home() {
     return () => unsubscribe();
   }, []);
 
-  // Initialize WebSocket Signaling Client & WebRTC Manager
+  // Initialize WebSocket Signaling Client & WebRTC Manager (Runs ONCE per device mount)
   useEffect(() => {
-    if (!isMounted || !deviceId || !channelCode) return;
+    if (!isMounted || !deviceId) return;
 
     const platform = getDevicePlatform();
     let webrtc: WebRTCManager | null = null;
@@ -426,11 +490,11 @@ export default function Home() {
         const transfer: Transfer = {
           id: msg.id,
           userId: msg.peerDeviceId,
-          accountId: channelCode,
+          accountId: channelCodeRef.current,
           senderDeviceId: msg.peerDeviceId,
           recipientDeviceId: deviceId,
           senderName: msg.senderName,
-          recipientName: deviceName,
+          recipientName: deviceNameRef.current,
           filename: msg.text.length > 40 ? msg.text.slice(0, 40) + "…" : "Text note",
           mimeType: "text/plain",
           size: msg.text.length,
@@ -440,13 +504,32 @@ export default function Home() {
           createdAt: new Date(msg.timestamp).toISOString(),
           expiresAt: new Date(msg.timestamp + 86400000).toISOString(),
         };
-        appendTransfer(transfer);
+        appendTransferRef.current(transfer);
         setRecentReceived(transfer);
         setNotice({ text: `Received note from ${msg.senderName}`, type: "success" });
       },
       onFileProgress: (transferId: string, percent: number, direction: "send" | "receive") => {
         setTransferProgress(percent);
         setTransferStatusText(direction === "send" ? `Sending file (${percent}%)...` : `Receiving file (${percent}%)...`);
+
+        if (direction === "receive") {
+          setOverlayState((prev) => {
+            const isComplete = percent >= 100;
+            return {
+              isOpen: true,
+              direction: "receive",
+              state: isComplete ? "verifying" : "receiving",
+              senderName: prev.senderName || "Remote Device",
+              recipientName: deviceNameRef.current,
+              itemsSummary: prev.itemsSummary || "Incoming file",
+              totalBytes: prev.totalBytes || 1024 * 1024,
+              transferredBytes: Math.round((percent / 100) * (prev.totalBytes || 1024 * 1024)),
+              percent,
+              transportMethod: "p2p",
+            };
+          });
+        }
+
         if (percent >= 100) {
           setTimeout(() => {
             setTransferProgress(null);
@@ -466,11 +549,11 @@ export default function Home() {
         const transfer: Transfer = {
           id: fileTransfer.id,
           userId: "peer",
-          accountId: channelCode,
+          accountId: channelCodeRef.current,
           senderDeviceId: "peer",
           recipientDeviceId: deviceId,
           senderName: fileTransfer.senderName,
-          recipientName: deviceName,
+          recipientName: deviceNameRef.current,
           filename: fileTransfer.filename,
           mimeType: fileTransfer.mimeType,
           size: fileTransfer.size,
@@ -480,9 +563,23 @@ export default function Home() {
           createdAt: new Date(fileTransfer.timestamp).toISOString(),
           expiresAt: new Date(fileTransfer.timestamp + 86400000).toISOString(),
         };
-        appendTransfer(transfer);
+        appendTransferRef.current(transfer);
         setRecentReceived(transfer);
         setNotice({ text: `Received "${fileTransfer.filename}" from ${fileTransfer.senderName}`, type: "success" });
+
+        setOverlayState((prev) => ({
+          ...prev,
+          isOpen: true,
+          direction: "receive",
+          state: "completed",
+          senderName: fileTransfer.senderName,
+          recipientName: deviceNameRef.current,
+          itemsSummary: fileTransfer.filename,
+          totalBytes: fileTransfer.size,
+          transferredBytes: fileTransfer.size,
+          percent: 100,
+          transportMethod: "p2p",
+        }));
       },
       onTransferAcknowledged: (transferId: string) => {
         console.log(`[WebRTC] Transfer ${transferId} acknowledged by recipient.`);
@@ -513,6 +610,7 @@ export default function Home() {
         setRemoteMembers(map);
       },
       onMembersUpdated: (data) => {
+        console.log("[Signaling] Members snapshot received rev", data.revision, "devices:", data.devices);
         const map = new Map<string, Device>();
         for (const dev of data.devices) {
           map.set(dev.id, dev);
@@ -552,20 +650,20 @@ export default function Home() {
       },
     });
 
-    webrtc = new WebRTCManager(signaling, deviceId, deviceName, webrtcCallbacks);
+    webrtc = new WebRTCManager(signaling, deviceId, deviceNameRef.current, webrtcCallbacks);
     signalingRef.current = signaling;
     webrtcRef.current = webrtc;
 
-    signaling.connect(channelCode, deviceId, deviceName, platform.type);
+    signaling.connect(channelCodeRef.current, deviceId, deviceNameRef.current, platform.type);
 
     transferManagerRef.current = new TransferManager(
       webrtc,
       db,
       storage,
       deviceId,
-      deviceName,
-      currentUser?.uid || "anon-user",
-      channelCode
+      deviceNameRef.current,
+      currentUserRef.current?.uid || "anon-user",
+      channelCodeRef.current
     );
 
     return () => {
@@ -575,7 +673,7 @@ export default function Home() {
       webrtcRef.current = null;
       transferManagerRef.current = null;
     };
-  }, [isMounted, deviceId, deviceName, channelCode, currentUser, appendTransfer]);
+  }, [isMounted, deviceId]);
 
   // Synchronize WebRTC Peer connections
   useEffect(() => {
@@ -847,10 +945,27 @@ export default function Home() {
     const recipientDevice = otherDevices.find((d) => d.id === recipient);
     const targetRecipientName = recipient === "all" ? "All Devices" : recipientDevice?.name || "Peer";
 
+    const filesToSend = [...selectedFiles];
+    const totalBytes = filesToSend.reduce((acc, f) => acc + f.size, 0);
+    const itemsSummary = filesToSend.length === 1 ? filesToSend[0].name : `${filesToSend.length} files`;
+    const isTargetP2P = recipient !== "all" && peerStates.get(recipient) === "connected";
+
     setTransferStatusText("Preparing files for transfer...");
     setTransferProgress(0);
 
-    const filesToSend = [...selectedFiles];
+    setOverlayState({
+      isOpen: true,
+      direction: "send",
+      state: "sending",
+      senderName: deviceNameRef.current,
+      recipientName: targetRecipientName,
+      itemsSummary,
+      totalBytes,
+      transferredBytes: 0,
+      percent: 0,
+      transportMethod: isTargetP2P ? "p2p" : "storage",
+    });
+
     let totalSuccess = 0;
 
     if (recipient === "all") {
@@ -867,6 +982,12 @@ export default function Home() {
               return next;
             });
             setTransferProgress(percent);
+            setOverlayState((prev) => ({
+              ...prev,
+              state: percent >= 100 ? "verifying" : "sending",
+              percent,
+              transferredBytes: Math.round((percent / 100) * totalBytes),
+            }));
           });
         });
 
@@ -888,6 +1009,12 @@ export default function Home() {
           (percent) => {
             setTransferProgress(percent);
             setTransferStatusText(`Transferring "${file.name}" (${percent}%)...`);
+            setOverlayState((prev) => ({
+              ...prev,
+              state: percent >= 100 ? "verifying" : "sending",
+              percent,
+              transferredBytes: Math.round((percent / 100) * totalBytes),
+            }));
           }
         );
         if (result.success) {
@@ -904,10 +1031,22 @@ export default function Home() {
     setMultiRecipientProgress(new Map());
 
     if (totalSuccess > 0) {
+      setOverlayState((prev) => ({
+        ...prev,
+        state: "completed",
+        percent: 100,
+        transferredBytes: totalBytes,
+      }));
       setNotice({
         text: `Successfully transferred ${filesToSend.length} file${filesToSend.length > 1 ? "s" : ""}!`,
         type: "success",
       });
+    } else {
+      setOverlayState((prev) => ({
+        ...prev,
+        state: "failed",
+        errorMessage: "Unable to transfer files. Connection lost or timed out.",
+      }));
     }
   };
 
@@ -1116,44 +1255,84 @@ export default function Home() {
           </div>
         )}
 
-        {/* Prominent Received File Notification Card */}
+        {/* Prominent Received Notification Card (File vs Text) */}
         {recentReceived && (
-          <div className={styles.receivedFileCard}>
-            <div className={styles.receivedFileLeft}>
-              <div className={styles.receivedThumbnailBox}>
-                {renderFileThumbnail(recentReceived.mimeType, recentReceived.filename, recentReceived.downloadUrl || recentReceived.fileData)}
-              </div>
-              <div className={styles.receivedDetails}>
+          recentReceived.textContent ? (
+            <div className={styles.receivedTextCard} role="status" aria-label="Text message received">
+              <div className={styles.receivedTextHeader}>
                 <div className={styles.receivedBadgeRow}>
-                  <CheckCircle2 size={13} />
-                  <span>File Received</span>
+                  <MessageSquare size={14} />
+                  <span>Text Received</span>
                   <span style={{ opacity: 0.7, textTransform: "none", fontWeight: 500 }}>
-                    • {recentReceived.method === "p2p" ? "P2P Direct" : "Secure Relay"}
+                    • From <strong>{recentReceived.senderName}</strong> • {recentReceived.method === "p2p" ? "P2P Direct" : "Secure Relay"}
                   </span>
                 </div>
-                <span className={styles.receivedFileName}>{recentReceived.filename}</span>
+                <button
+                  className={styles.iconBtn}
+                  onClick={() => setRecentReceived(null)}
+                  title="Dismiss notification"
+                  aria-label="Dismiss notification"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <blockquote className={styles.receivedTextQuote}>
+                &ldquo;{recentReceived.textContent}&rdquo;
+              </blockquote>
+              <div className={styles.receivedTextBottom}>
                 <span className={styles.receivedFileMeta}>
-                  {formatBytes(recentReceived.size)} • From <strong>{recentReceived.senderName}</strong>
+                  {recentReceived.textContent.length} characters • {formatTime(recentReceived.createdAt)}
                 </span>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    className={styles.primaryBtn}
+                    onClick={() => handleTransferAction(recentReceived)}
+                  >
+                    {copiedId === recentReceived.id ? <Check size={15} /> : <Copy size={15} />}
+                    <span>{copiedId === recentReceived.id ? "Copied" : "Copy Text"}</span>
+                  </button>
+                </div>
               </div>
             </div>
-            <div className={styles.receivedActions}>
-              <button
-                className={styles.primaryBtn}
-                onClick={() => handleTransferAction(recentReceived)}
-              >
-                <Download size={15} />
-                <span>Download</span>
-              </button>
-              <button
-                className={styles.iconBtn}
-                onClick={() => setRecentReceived(null)}
-                title="Dismiss"
-              >
-                <X size={16} />
-              </button>
+          ) : (
+            <div className={styles.receivedFileCard} role="status" aria-label="File received">
+              <div className={styles.receivedFileLeft}>
+                <div className={styles.receivedThumbnailBox}>
+                  {renderFileThumbnail(recentReceived.mimeType, recentReceived.filename, recentReceived.downloadUrl || recentReceived.fileData)}
+                </div>
+                <div className={styles.receivedDetails}>
+                  <div className={styles.receivedBadgeRow}>
+                    <CheckCircle2 size={13} />
+                    <span>File Received</span>
+                    <span style={{ opacity: 0.7, textTransform: "none", fontWeight: 500 }}>
+                      • {recentReceived.method === "p2p" ? "P2P Direct" : "Secure Relay"}
+                    </span>
+                  </div>
+                  <span className={styles.receivedFileName}>{recentReceived.filename}</span>
+                  <span className={styles.receivedFileMeta}>
+                    {formatBytes(recentReceived.size)} • From <strong>{recentReceived.senderName}</strong>
+                  </span>
+                </div>
+              </div>
+              <div className={styles.receivedActions}>
+                <button
+                  className={styles.primaryBtn}
+                  onClick={() => handleTransferAction(recentReceived)}
+                >
+                  <Download size={15} />
+                  <span>Download</span>
+                </button>
+                <button
+                  className={styles.iconBtn}
+                  onClick={() => setRecentReceived(null)}
+                  title="Dismiss"
+                  aria-label="Dismiss notification"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
-          </div>
+          )
         )}
 
         {/* ==================================================
@@ -1679,7 +1858,13 @@ export default function Home() {
                     <div
                       key={item.id}
                       className={styles.transferItem}
-                      onClick={() => handleTransferAction(item)}
+                      onClick={() => {
+                        if (isText && (item.textContent?.length || 0) > 120) {
+                          setViewingTextNote(item);
+                        } else {
+                          handleTransferAction(item);
+                        }
+                      }}
                       role="button"
                       tabIndex={0}
                       onKeyDown={(e) => {
@@ -1687,10 +1872,10 @@ export default function Home() {
                           handleTransferAction(item);
                         }
                       }}
-                      title={isText ? "Click to copy note" : "Click to download"}
+                      title={isText ? "Click to copy text note" : "Click to download file"}
                     >
                       <div className={styles.transferLeft}>
-                        {/* LARGE PREVIEW THUMBNAIL (VISUAL ANCHOR) */}
+                        {/* Visual Anchor Box */}
                         <div className={styles.transferThumbBox}>
                           {isText ? (
                             <MessageSquare size={24} strokeWidth={2} />
@@ -1700,7 +1885,23 @@ export default function Home() {
                         </div>
 
                         <div className={styles.transferDetails}>
-                          {/* 1. FILE/TEXT IS DOMINANT */}
+                          {/* Type Tag & Direction */}
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                            <span className={`${styles.transferTypeTag} ${isSentByMe ? styles.sent : ""}`}>
+                              {isText
+                                ? isSentByMe
+                                  ? "Text Sent"
+                                  : "Text Received"
+                                : isSentByMe
+                                ? "File Sent"
+                                : "File Received"}
+                            </span>
+                            <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                              {isSentByMe ? `To: ${item.recipientName}` : `From: ${item.senderName}`}
+                            </span>
+                          </div>
+
+                          {/* 1. Content is Primary */}
                           {isText ? (
                             <p className={styles.transferTextQuote}>
                               &ldquo;{item.textContent}&rdquo;
@@ -1711,13 +1912,9 @@ export default function Home() {
                             </span>
                           )}
 
-                          {/* 2. PERSON & SIZE IS SECOND */}
+                          {/* 2. Metadata is Secondary */}
                           <div className={styles.transferMetaRow}>
-                            <span>
-                              {isSentByMe ? `To: ${item.recipientName}` : `From: ${item.senderName}`}
-                            </span>
-                            <span>•</span>
-                            <span>{formatBytes(item.size)}</span>
+                            <span>{isText ? `${item.textContent?.length || 0} chars` : formatBytes(item.size)}</span>
                             <span>•</span>
                             <span>{formatTime(item.createdAt)}</span>
                             <span>•</span>
@@ -1740,7 +1937,7 @@ export default function Home() {
                             e.stopPropagation();
                             handleTransferAction(item);
                           }}
-                          aria-label={isText ? "Copy note" : "Download file"}
+                          aria-label={isText ? "Copy text note" : "Download file"}
                         >
                           {copiedId === item.id ? (
                             <>
@@ -1750,7 +1947,7 @@ export default function Home() {
                           ) : isText ? (
                             <>
                               <Copy size={14} />
-                              <span>Copy</span>
+                              <span>Copy Text</span>
                             </>
                           ) : (
                             <>
@@ -1762,7 +1959,7 @@ export default function Home() {
                         <button
                           className={styles.iconBtn}
                           onClick={(e) => deleteTransfer(item.id, e)}
-                          title="Delete"
+                          title="Delete transfer from history"
                           aria-label="Delete"
                         >
                           <Trash2 size={15} />
@@ -1776,6 +1973,77 @@ export default function Home() {
           </section>
         </div>
       </div>
+
+      {/* ==================================================
+          VIEW FULL TEXT NOTE MODAL
+          ================================================== */}
+      {viewingTextNote && (
+        <div className={styles.modalOverlay} onClick={() => setViewingTextNote(null)}>
+          <div
+            className={styles.modalCard}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(560px, 95vw)" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="text-note-title"
+          >
+            <div className={styles.modalHeader}>
+              <h3 id="text-note-title" className={styles.modalTitle}>
+                <MessageSquare size={20} />
+                <span>Text Note</span>
+              </h3>
+              <button
+                className={styles.iconBtn}
+                onClick={() => setViewingTextNote(null)}
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", color: "var(--text-secondary)" }}>
+                <span>From: <strong>{viewingTextNote.senderName}</strong></span>
+                <span>{formatTime(viewingTextNote.createdAt)}</span>
+              </div>
+
+              <div style={{
+                background: "rgba(10, 11, 16, 0.7)",
+                border: "1px solid var(--border-subtle)",
+                borderRadius: "var(--radius-md)",
+                padding: "16px",
+                fontSize: "15px",
+                lineHeight: "1.6",
+                color: "#FFF1D0",
+                maxHeight: "360px",
+                overflowY: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word"
+              }}>
+                {viewingTextNote.textContent}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                <button
+                  className={styles.secondaryBtn}
+                  onClick={() => setViewingTextNote(null)}
+                >
+                  Close
+                </button>
+                <button
+                  className={styles.primaryBtn}
+                  onClick={() => {
+                    handleTransferAction(viewingTextNote);
+                  }}
+                >
+                  {copiedId === viewingTextNote.id ? <Check size={16} /> : <Copy size={16} />}
+                  <span>{copiedId === viewingTextNote.id ? "Copied" : "Copy Full Text"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ==================================================
           SETTINGS & TELEMETRY MODAL
@@ -1880,6 +2148,34 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* ==================================================
+          FULLSCREEN REAL-TIME TRANSFER ANIMATION OVERLAY
+          ================================================== */}
+      <TransferOverlay
+        isOpen={overlayState.isOpen}
+        direction={overlayState.direction}
+        state={overlayState.state}
+        senderName={overlayState.senderName}
+        recipientName={overlayState.recipientName}
+        itemsSummary={overlayState.itemsSummary}
+        totalBytes={overlayState.totalBytes}
+        transferredBytes={overlayState.transferredBytes}
+        percent={overlayState.percent}
+        transportMethod={overlayState.transportMethod}
+        errorMessage={overlayState.errorMessage}
+        onCancel={() => {
+          setOverlayState((prev) => ({ ...prev, isOpen: false, state: "cancelled" }));
+          setNotice({ text: "Transfer cancelled.", type: "info" });
+        }}
+        onRetry={() => {
+          setOverlayState((prev) => ({ ...prev, isOpen: false }));
+          handleSendFiles();
+        }}
+        onClose={() => {
+          setOverlayState((prev) => ({ ...prev, isOpen: false }));
+        }}
+      />
     </div>
   );
 }

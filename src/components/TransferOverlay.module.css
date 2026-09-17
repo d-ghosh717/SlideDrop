@@ -1,0 +1,461 @@
+.overlayBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 45%, rgba(26, 20, 14, 0.96) 0%, rgba(8, 9, 12, 0.98) 100%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  padding: 24px;
+  overflow: hidden;
+  height: 100vh;
+  height: 100dvh;
+  animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.ambientGlow {
+  position: absolute;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 159, 28, 0.15) 0%, rgba(255, 107, 107, 0.05) 50%, transparent 70%);
+  filter: blur(60px);
+  pointer-events: none;
+  animation: pulseGlow 4s ease-in-out infinite alternate;
+}
+
+@keyframes pulseGlow {
+  0% {
+    transform: scale(0.9) translateY(-10px);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.15) translateY(10px);
+    opacity: 0.9;
+  }
+}
+
+.overlayCard {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  background: rgba(18, 19, 26, 0.85);
+  border: 1px solid rgba(255, 180, 100, 0.18);
+  border-radius: 28px;
+  padding: 36px 32px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  box-shadow: 0 30px 80px -15px rgba(0, 0, 0, 0.8),
+              0 0 40px -10px rgba(255, 159, 28, 0.2),
+              inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Header & Direction */
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 159, 28, 0.12);
+  border: 1px solid rgba(255, 159, 28, 0.3);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #FFC857;
+  margin-bottom: 12px;
+}
+
+.statusBadge.completed {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #34D399;
+}
+
+.statusBadge.failed {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #F87171;
+}
+
+.routeTitle {
+  font-size: 20px;
+  font-weight: 800;
+  color: #F3F4F6;
+  margin: 0 0 6px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.routeArrow {
+  color: #FF9F1C;
+}
+
+.fileSummarySubtext {
+  font-size: 14px;
+  color: #9CA3AF;
+  margin: 0 0 24px 0;
+}
+
+/* Visual Stage / Theater */
+.animationStage {
+  position: relative;
+  width: 220px;
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+/* Launch Platform (Sender) */
+.launchPad {
+  position: absolute;
+  bottom: 15px;
+  width: 140px;
+  height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(255, 159, 28, 0.4) 0%, rgba(255, 107, 107, 0.1) 60%, transparent 80%);
+  border: 1px solid rgba(255, 159, 28, 0.3);
+  box-shadow: 0 0 30px rgba(255, 159, 28, 0.5);
+  animation: padPulse 2s infinite alternate ease-in-out;
+}
+
+@keyframes padPulse {
+  0% { transform: scale(0.95); opacity: 0.6; }
+  100% { transform: scale(1.05); opacity: 1; }
+}
+
+/* Capsule Vehicle */
+.capsuleWrapper {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.capsuleWrapper.sending {
+  animation: rocketHover 2.2s infinite ease-in-out;
+}
+
+.capsuleWrapper.receiving {
+  animation: portalDescent 2.5s infinite ease-in-out;
+}
+
+@keyframes rocketHover {
+  0% { transform: translateY(8px) scale(0.98); }
+  50% { transform: translateY(-8px) scale(1.02); }
+  100% { transform: translateY(8px) scale(0.98); }
+}
+
+@keyframes portalDescent {
+  0% { transform: translateY(-12px) scale(0.95); opacity: 0.8; }
+  50% { transform: translateY(4px) scale(1.05); opacity: 1; }
+  100% { transform: translateY(-12px) scale(0.95); opacity: 0.8; }
+}
+
+.capsuleBody {
+  width: 76px;
+  height: 94px;
+  background: linear-gradient(180deg, #2A2D3A 0%, #171922 100%);
+  border: 2px solid #FFC857;
+  border-radius: 38px 38px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 25px rgba(255, 159, 28, 0.35),
+              inset 0 2px 4px rgba(255, 255, 255, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+.capsuleGlass {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #FFF1D0 0%, #FF9F1C 60%, #D95D0F 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #12131A;
+  box-shadow: 0 0 12px rgba(255, 159, 28, 0.8);
+}
+
+.capsuleThruster {
+  width: 22px;
+  height: 28px;
+  background: linear-gradient(180deg, #FFC857 0%, #FF5A36 60%, transparent 100%);
+  border-radius: 0 0 11px 11px;
+  filter: blur(2px);
+  margin-top: -4px;
+  animation: flameFlicker 0.15s infinite alternate;
+}
+
+@keyframes flameFlicker {
+  0% { transform: scaleY(0.85) scaleX(0.9); opacity: 0.8; }
+  100% { transform: scaleY(1.2) scaleX(1.1); opacity: 1; }
+}
+
+/* Portal Rings (Receiver) */
+.portalRing {
+  position: absolute;
+  top: 10px;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  border: 2px dashed rgba(255, 159, 28, 0.4);
+  animation: rotatePortal 12s linear infinite;
+}
+
+@keyframes rotatePortal {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.portalGlow {
+  position: absolute;
+  top: 30px;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 200, 87, 0.25) 0%, rgba(255, 107, 107, 0.1) 60%, transparent 80%);
+  filter: blur(10px);
+}
+
+/* Floating File Badges */
+.floatingFiles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.floatingFileCard {
+  position: absolute;
+  background: rgba(30, 33, 45, 0.9);
+  border: 1px solid rgba(255, 200, 87, 0.3);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #FFF1D0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  animation: floatOrbit 3.5s infinite ease-in-out;
+}
+
+.floatingFileCard:nth-child(1) {
+  top: 25px;
+  left: 0px;
+  animation-delay: 0s;
+}
+
+.floatingFileCard:nth-child(2) {
+  bottom: 35px;
+  right: 0px;
+  animation-delay: 1.2s;
+}
+
+@keyframes floatOrbit {
+  0% { transform: translate(0, 0) scale(0.95); }
+  50% { transform: translate(6px, -10px) scale(1.05); }
+  100% { transform: translate(0, 0) scale(0.95); }
+}
+
+/* Completion Celebration */
+.successCheckCircle {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #34D399 0%, #059669 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  box-shadow: 0 0 35px rgba(16, 185, 129, 0.5),
+              0 0 70px rgba(16, 185, 129, 0.2);
+  animation: popSuccess 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes popSuccess {
+  0% { transform: scale(0.4); opacity: 0; }
+  80% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Failed Icon */
+.failedCircle {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #F87171 0%, #DC2626 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  box-shadow: 0 0 35px rgba(239, 68, 68, 0.5);
+  animation: popSuccess 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+/* Real-Time Progress Section */
+.progressSection {
+  width: 100%;
+  margin-bottom: 24px;
+}
+
+.progressInfoRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #E5E7EB;
+}
+
+.percentDisplay {
+  font-family: var(--font-mono, monospace);
+  font-size: 18px;
+  font-weight: 800;
+  color: #FFC857;
+}
+
+.progressBarTrack {
+  width: 100%;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progressBarFill {
+  height: 100%;
+  background: linear-gradient(90deg, #FF6B6B 0%, #FF9F1C 50%, #FFC857 100%);
+  border-radius: 999px;
+  transition: width 0.15s ease-out;
+  box-shadow: 0 0 12px rgba(255, 159, 28, 0.6);
+}
+
+.metaInfoRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: #9CA3AF;
+}
+
+.transportTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #FFC857;
+  font-weight: 600;
+}
+
+/* Action Buttons */
+.actionRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.cancelBtn {
+  padding: 10px 24px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: #E5E7EB;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cancelBtn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.retryBtn {
+  padding: 10px 24px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, #FF9F1C 0%, #FF5A36 100%);
+  color: #0D0E14;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(255, 107, 107, 0.35);
+  transition: all 0.2s ease;
+}
+
+.retryBtn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+/* Reduced Motion Override */
+@media (prefers-reduced-motion: reduce) {
+  .overlayBackdrop {
+    animation: none;
+  }
+  .ambientGlow,
+  .launchPad,
+  .capsuleWrapper.sending,
+  .capsuleWrapper.receiving,
+  .portalRing,
+  .floatingFileCard,
+  .capsuleThruster,
+  .successCheckCircle,
+  .failedCircle {
+    animation: none !important;
+  }
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 480px) {
+  .overlayCard {
+    padding: 28px 20px 24px;
+    border-radius: 22px;
+  }
+  .routeTitle {
+    font-size: 18px;
+  }
+  .animationStage {
+    height: 150px;
+    margin-bottom: 16px;
+  }
+  .capsuleBody {
+    width: 66px;
+    height: 82px;
+  }
+  .capsuleGlass {
+    width: 32px;
+    height: 32px;
+  }
+}
