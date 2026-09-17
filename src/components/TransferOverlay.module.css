@@ -1,6 +1,6 @@
 /* ==================================================
-   CINEMATIC FULLSCREEN TRANSFER EXPERIENCE
-   SlideDrop Courier Capsule & Atmospheric Environment
+   CINEMATIC SLIDEDROP TRANSFER EXPERIENCE
+   Photorealistic Earth Low-Orbit & Gold Trajectory
    ================================================== */
 
 .overlayBackdrop {
@@ -11,8 +11,15 @@
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  background: radial-gradient(circle at 50% 40%, #10131B 0%, #080A0F 60%, #030406 100%);
-  padding: 36px 32px 28px;
+  background-color: #030406;
+  background-image: 
+    radial-gradient(circle at 90% 60%, rgba(255, 220, 120, 0.14) 0%, transparent 45%),
+    linear-gradient(to bottom, #020305 0%, rgba(3, 4, 6, 0.4) 40%, rgba(2, 3, 5, 0.85) 100%),
+    url('/earth-space-bg.jpg');
+  background-size: cover;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  padding: 20px 32px 24px;
   overflow: hidden;
   height: 100vh;
   height: 100dvh;
@@ -26,540 +33,425 @@
 }
 
 /* ==================================================
-   PROCEDURAL ANIMATED BACKGROUND (Subtle & Natural)
+   BACKGROUND LIGHTING & ATMOSPHERE
    ================================================== */
-.cosmicBg {
+.sunlightGlowRight {
   position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  z-index: 0;
-}
-
-/* Ambient Radial Device Halos */
-.ambientGlowLeft {
-  position: absolute;
-  top: 35%;
-  left: 5%;
-  transform: translateY(-50%);
-  width: 380px;
-  height: 380px;
+  top: 45%;
+  right: -6%;
+  width: 550px;
+  height: 550px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 159, 28, 0.08) 0%, rgba(255, 107, 53, 0.02) 50%, transparent 75%);
+  background: radial-gradient(circle, rgba(255, 220, 120, 0.2) 0%, rgba(255, 159, 28, 0.08) 45%, transparent 70%);
   filter: blur(60px);
-  animation: auraPulse 8s ease-in-out infinite alternate;
-}
-
-.ambientGlowRight {
-  position: absolute;
-  top: 35%;
-  right: 5%;
-  transform: translateY(-50%);
-  width: 420px;
-  height: 420px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 200, 87, 0.09) 0%, rgba(255, 159, 28, 0.03) 50%, transparent 75%);
-  filter: blur(60px);
-  animation: auraPulse 8s ease-in-out 4s infinite alternate;
-}
-
-@keyframes auraPulse {
-  0% { transform: translateY(-50%) scale(0.9); opacity: 0.7; }
-  100% { transform: translateY(-50%) scale(1.15); opacity: 1; }
-}
-
-/* Orbital Ambient Grid Lines */
-.orbitalGrid {
-  position: absolute;
-  inset: 0;
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
-  background-size: 80px 80px;
-  mask-image: radial-gradient(ellipse 65% 55% at 50% 45%, black 20%, transparent 80%);
-  -webkit-mask-image: radial-gradient(ellipse 65% 55% at 50% 45%, black 20%, transparent 80%);
-  opacity: 0.6;
-}
-
-/* Procedural Dust Specks (Slow Floating Natural Micro-Particles) */
-.particleLayer {
-  position: absolute;
-  inset: 0;
   pointer-events: none;
+  animation: sunlightPulse 6s ease-in-out infinite alternate;
+  z-index: 1;
 }
 
-.particle {
-  position: absolute;
-  border-radius: 50%;
-  background: #FFC857;
-  opacity: 0.25;
-  filter: blur(0.5px);
-  animation: particleDrift linear infinite;
+@keyframes sunlightPulse {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  100% { transform: scale(1.1); opacity: 1; }
 }
 
-.particle:nth-child(1) { width: 2px; height: 2px; top: 22%; left: 15%; animation-duration: 18s; }
-.particle:nth-child(2) { width: 1.5px; height: 1.5px; top: 45%; left: 28%; animation-duration: 24s; animation-delay: -5s; opacity: 0.35; }
-.particle:nth-child(3) { width: 2.5px; height: 2.5px; top: 30%; left: 42%; animation-duration: 16s; animation-delay: -2s; background: #FF9F1C; }
-.particle:nth-child(4) { width: 1.5px; height: 1.5px; top: 60%; left: 55%; animation-duration: 20s; animation-delay: -8s; opacity: 0.2; }
-.particle:nth-child(5) { width: 2px; height: 2px; top: 25%; left: 70%; animation-duration: 22s; animation-delay: -12s; }
-.particle:nth-child(6) { width: 3px; height: 3px; top: 50%; left: 82%; animation-duration: 15s; animation-delay: -4s; opacity: 0.3; background: #FF9F1C; }
-.particle:nth-child(7) { width: 1.5px; height: 1.5px; top: 75%; left: 35%; animation-duration: 26s; animation-delay: -15s; }
-.particle:nth-child(8) { width: 2px; height: 2px; top: 15%; left: 60%; animation-duration: 19s; animation-delay: -7s; }
-
-@keyframes particleDrift {
-  0% { transform: translateY(0) translateX(0); opacity: 0.1; }
-  50% { opacity: 0.45; }
-  100% { transform: translateY(-40px) translateX(30px); opacity: 0.1; }
-}
-
-/* ==================================================
-   HEADER INFO SECTION
-   ================================================== */
-.headerSection {
+/* Top Subtle Header Bar */
+.topNavBar {
   position: relative;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.mainTitle {
-  font-size: 26px;
-  font-weight: 800;
-  color: #F9FAFB;
-  letter-spacing: -0.025em;
-  margin: 0;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
-}
-
-.deviceHighlight {
-  color: #FFC857;
-  text-shadow: 0 0 20px rgba(255, 200, 87, 0.4);
-}
-
-.subtitle {
-  font-size: 14px;
-  font-weight: 600;
-  color: #9CA3AF;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.subtitleDot {
-  color: #FF9F1C;
-}
-
-/* ==================================================
-   MAIN STAGE (Sender -> Trajectory -> Receiver)
-   ================================================== */
-.stageContainer {
-  position: relative;
-  z-index: 5;
+  z-index: 20;
   width: 100%;
-  max-width: 1020px;
-  flex: 1;
+  max-width: 1120px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 0;
+  padding: 4px 0;
 }
 
-/* Device Node & Badge */
-.deviceNode {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  position: relative;
-  z-index: 4;
-}
-
-.deviceBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: rgba(22, 26, 36, 0.85);
-  border: 1px solid rgba(255, 180, 100, 0.22);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  font-size: 13px;
-  font-weight: 700;
-  color: #F3F4F6;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
-}
-
-/* Laptop Model Visual */
-.laptopWrapper {
-  width: 180px;
-  height: 125px;
-  position: relative;
-  perspective: 600px;
-}
-
-.laptopScreen {
-  width: 146px;
-  height: 96px;
-  margin: 0 auto;
-  background: #0E1017;
-  border: 2px solid #282C3A;
-  border-radius: 8px 8px 0 0;
-  transform: rotateX(15deg);
-  transform-origin: bottom center;
-  box-shadow: 0 0 25px rgba(255, 159, 28, 0.15), inset 0 0 15px rgba(0,0,0,0.8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  overflow: hidden;
-}
-
-.laptopScreen::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(255, 159, 28, 0.12) 0%, transparent 60%);
-}
-
-.laptopBase {
-  width: 174px;
-  height: 13px;
-  margin: -2px auto 0;
-  background: linear-gradient(180deg, #303545 0%, #171A24 100%);
-  border-radius: 0 0 10px 10px;
-  border: 1px solid #41475A;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.7);
-  position: relative;
-}
-
-.laptopBase::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 38px;
-  height: 3px;
-  background: #0E1017;
-  border-radius: 0 0 3px 3px;
-}
-
-/* Phone Model Visual */
-.phoneWrapper {
-  width: 86px;
-  height: 154px;
-  background: #0F1118;
-  border: 2px solid #303545;
-  border-radius: 20px;
-  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.8),
-              0 0 25px rgba(255, 159, 28, 0.2),
-              inset 0 0 10px rgba(0, 0, 0, 0.8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  overflow: hidden;
-  transform: rotate(-3deg);
-}
-
-.phoneWrapper::before {
-  content: "";
-  position: absolute;
-  top: 8px;
-  width: 30px;
-  height: 4px;
-  background: #232734;
-  border-radius: 2px;
-}
-
-/* Receiver Ambient Light Ring */
-.receiverLightRing {
-  position: absolute;
-  inset: -14px;
-  border-radius: 28px;
-  border: 1.5px solid rgba(255, 180, 80, 0.45);
-  box-shadow: 0 0 25px rgba(255, 159, 28, 0.35);
-  animation: receiverPulse 2.4s ease-in-out infinite alternate;
-  pointer-events: none;
-}
-
-@keyframes receiverPulse {
-  0% { transform: scale(0.97); opacity: 0.5; }
-  100% { transform: scale(1.03); opacity: 0.9; }
-}
-
-/* ==================================================
-   TRAJECTORY & SLIDEDROP COURIER CAPSULE
-   ================================================== */
-.trajectoryStage {
-  flex: 1;
-  height: 160px;
-  position: relative;
-  margin: 0 20px;
-  display: flex;
-  align-items: center;
-}
-
-/* Realistic Curved Optical Beam (SVG / Gradient Line) */
-.plasmaBeam {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 4px;
-  transform: translateY(-50%);
-  background: linear-gradient(90deg, 
-    rgba(255, 159, 28, 0.1) 0%, 
-    rgba(255, 159, 28, 0.7) 25%, 
-    rgba(255, 200, 87, 0.95) 65%, 
-    rgba(255, 107, 53, 0.85) 100%);
-  border-radius: 999px;
-  box-shadow: 0 0 16px rgba(255, 159, 28, 0.7), 0 0 32px rgba(255, 159, 28, 0.3);
-}
-
-/* Traveling Frosted File Cards */
-.travelFilesTrack {
-  position: absolute;
-  left: 8%;
-  right: 28%;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  justify-content: space-evenly;
-  z-index: 3;
-}
-
-.travelCard {
-  width: 48px;
-  height: 48px;
-  border-radius: 11px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  font-size: 8.5px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: #FFFFFF;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5),
-              0 0 16px rgba(255, 159, 28, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(8px);
-  animation: cardFloat 2.6s ease-in-out infinite alternate;
-}
-
-.travelCard:nth-child(1) { animation-delay: 0s; background: linear-gradient(135deg, rgba(59, 130, 246, 0.9) 0%, rgba(29, 78, 216, 0.9) 100%); }
-.travelCard:nth-child(2) { animation-delay: 0.4s; background: linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(185, 28, 28, 0.9) 100%); }
-.travelCard:nth-child(3) { animation-delay: 0.8s; background: linear-gradient(135deg, rgba(139, 92, 246, 0.9) 0%, rgba(109, 40, 217, 0.9) 100%); }
-.travelCard:nth-child(4) { animation-delay: 1.2s; background: linear-gradient(135deg, rgba(100, 116, 139, 0.9) 0%, rgba(51, 65, 85, 0.9) 100%); }
-
-@keyframes cardFloat {
-  0% { transform: translateY(-6px) scale(0.97); }
-  100% { transform: translateY(6px) scale(1.03); }
-}
-
-/* ==================================================
-   REALISTIC SLIDEDROP DATA COURIER CAPSULE
-   Aerodynamic brushed dark titanium with ion thruster
-   ================================================== */
-.capsuleRocket {
-  position: absolute;
-  right: 14%;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  z-index: 5;
-  animation: capsuleCruise 2.2s ease-in-out infinite alternate;
-}
-
-@keyframes capsuleCruise {
-  0% { transform: translateY(-52%) translateX(-4px) rotate(-1deg); }
-  100% { transform: translateY(-48%) translateX(6px) rotate(1deg); }
-}
-
-/* Capsule Aerodynamic Body */
-.courierCapsule {
-  width: 86px;
-  height: 32px;
-  background: linear-gradient(180deg, #2D3344 0%, #1B1E29 55%, #10121A 100%);
-  border: 1.5px solid rgba(255, 200, 87, 0.7);
-  border-radius: 8px 20px 20px 8px;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 10px 0 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6),
-              0 0 20px rgba(255, 159, 28, 0.4),
-              inset 0 1px 1px rgba(255, 255, 255, 0.3);
-}
-
-/* Telemetry Seam & SlideDrop Mark */
-.capsuleSeam {
-  position: absolute;
-  left: 6px;
-  right: 18px;
-  top: 50%;
-  height: 2px;
-  transform: translateY(-50%);
-  background: linear-gradient(90deg, #FF6B35 0%, #FF9F1C 60%, #FFC857 100%);
-  box-shadow: 0 0 6px rgba(255, 159, 28, 0.8);
-  border-radius: 1px;
-}
-
-.capsuleSensorLens {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #FFFFFF 0%, #FFC857 50%, #D95D0F 100%);
-  box-shadow: 0 0 10px rgba(255, 200, 87, 0.9);
-  position: relative;
-  z-index: 2;
-  margin-left: auto;
-}
-
-/* Restrained Ion-Plasma Micro-Thruster (Not a cartoon flame) */
-.ionThruster {
-  position: absolute;
-  left: -20px;
-  width: 22px;
-  height: 12px;
-  background: linear-gradient(270deg, rgba(255, 200, 87, 0.9) 0%, rgba(255, 107, 53, 0.6) 50%, transparent 100%);
-  border-radius: 50% 0 0 50%;
-  filter: blur(1.5px);
-  animation: ionPulse 0.18s infinite alternate;
-}
-
-@keyframes ionPulse {
-  0% { transform: scaleX(0.85) scaleY(0.9); opacity: 0.7; }
-  100% { transform: scaleX(1.15) scaleY(1.05); opacity: 0.95; }
-}
-
-/* ==================================================
-   HUD PROGRESS CONTROL BAR
-   ================================================== */
-.hudSection {
-  position: relative;
-  z-index: 10;
-  width: 100%;
-  max-width: 620px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  background: rgba(16, 19, 27, 0.75);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 180, 100, 0.2);
-  border-radius: 20px;
-  padding: 20px 26px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
-}
-
-.hudProgressRow {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.progressBarTrack {
-  flex: 1;
-  height: 10px;
-  background: rgba(255, 255, 255, 0.07);
-  border-radius: 999px;
-  overflow: hidden;
-  position: relative;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
-}
-
-.progressBarFill {
-  height: 100%;
-  background: linear-gradient(90deg, #FF6B35 0%, #FF9F1C 50%, #FFC857 100%);
-  border-radius: 999px;
-  box-shadow: 0 0 14px rgba(255, 159, 28, 0.8);
-  transition: width 0.15s ease-out;
-}
-
-.percentLabel {
-  font-family: var(--font-mono, monospace);
-  font-size: 19px;
-  font-weight: 800;
-  color: #FFC857;
-  min-width: 48px;
-  text-align: right;
-  text-shadow: 0 0 12px rgba(255, 200, 87, 0.4);
-}
-
-.hudMetaRow {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: #9CA3AF;
+.brandLeft {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.cancelTransferBtn {
-  display: inline-flex;
+.brandIcon {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #FFC857 0%, #FF9F1C 60%, #E65100 100%);
+  display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px 20px;
-  border-radius: 10px;
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.35);
-  color: #F87171;
-  font-size: 13.5px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 0 12px rgba(239, 68, 68, 0.12);
+  justify-content: center;
+  box-shadow: 0 0 15px rgba(255, 200, 87, 0.6);
 }
 
-.cancelTransferBtn:hover {
-  background: rgba(239, 68, 68, 0.16);
-  border-color: rgba(239, 68, 68, 0.6);
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.25);
-  transform: translateY(-1px);
+.brandText {
+  font-size: 18px;
+  font-weight: 800;
+  color: #FFFFFF;
+  letter-spacing: -0.02em;
+}
+
+.navTabs {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.navTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #9CA3AF;
+  padding: 6px 4px;
+  position: relative;
+  cursor: default;
+}
+
+.navTabActive {
+  color: #FFC857;
+}
+
+.navTabActive::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #FFC857;
+  border-radius: 2px;
+  box-shadow: 0 0 8px #FFC857;
+}
+
+.settingsBtn {
+  background: none;
+  border: none;
+  color: #9CA3AF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  transition: color 0.2s ease;
+}
+
+.settingsBtn:hover {
+  color: #FFFFFF;
 }
 
 /* ==================================================
-   AMBIENT SIDE BADGES & BRANDING
+   TITLE & SUBTITLE SECTION
    ================================================== */
-.ambientFeatures {
-  position: absolute;
-  bottom: 24px;
-  right: 28px;
+.titleSection {
+  position: relative;
+  z-index: 15;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  pointer-events: none;
-  z-index: 6;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  margin-top: 10px;
 }
 
-.featureItem {
+.mainHeaderTitle {
+  font-size: 32px;
+  font-weight: 700;
+  color: #F9FAFB;
+  letter-spacing: -0.02em;
+  margin: 0;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.8);
+}
+
+.mainHeaderSubtitle {
+  font-size: 14.5px;
+  font-weight: 500;
+  color: #9CA3AF;
+  letter-spacing: 0.03em;
+  margin: 0;
+}
+
+/* ==================================================
+   MAIN ORBITAL STAGE (Source -> Rocket -> Destination)
+   ================================================== */
+.orbitalStage {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 1040px;
+  height: 220px;
   display: flex;
   align-items: center;
-  gap: 9px;
-  font-size: 11px;
-  color: #9CA3AF;
+  justify-content: space-between;
+  margin: 10px 0;
 }
 
-.featureIconBox {
-  width: 24px;
-  height: 24px;
+/* Device Node Visuals */
+.deviceNode {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  z-index: 6;
+  width: 140px;
+}
+
+/* Concentric Golden Orbital Rings Behind Devices */
+.orbitalRingsContainer {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 170px;
+  height: 170px;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: -1;
+}
+
+.ring1 {
+  position: absolute;
+  width: 105px;
+  height: 105px;
   border-radius: 50%;
-  background: rgba(255, 159, 28, 0.1);
-  border: 1px solid rgba(255, 159, 28, 0.22);
+  border: 1px solid rgba(255, 190, 60, 0.35);
+  box-shadow: 0 0 20px rgba(255, 160, 30, 0.18);
+  animation: ringRotate 24s linear infinite;
+}
+
+.ring2 {
+  position: absolute;
+  width: 135px;
+  height: 135px;
+  border-radius: 50%;
+  border: 1px dashed rgba(255, 190, 60, 0.22);
+  animation: ringRotateReverse 32s linear infinite;
+}
+
+.ring3 {
+  position: absolute;
+  width: 165px;
+  height: 165px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 190, 60, 0.12);
+  animation: ringRotate 40s linear infinite;
+}
+
+@keyframes ringRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ringRotateReverse {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+
+/* Laptop Device Graphic */
+.deviceGraphicLaptop {
+  width: 82px;
+  height: 56px;
+  position: relative;
+  perspective: 400px;
+  filter: drop-shadow(0 0 16px rgba(255, 180, 50, 0.35));
+}
+
+.laptopScreen {
+  width: 68px;
+  height: 44px;
+  margin: 0 auto;
+  background: #0D0F16;
+  border: 2px solid #373C4E;
+  border-radius: 6px 6px 0 0;
+  transform: rotateX(15deg);
+  transform-origin: bottom center;
+  box-shadow: 0 0 20px rgba(255, 159, 28, 0.2), inset 0 0 10px rgba(0,0,0,0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.laptopBase {
+  width: 80px;
+  height: 6px;
+  margin: -2px auto 0;
+  background: linear-gradient(180deg, #373C4E 0%, #1A1D27 100%);
+  border-radius: 0 0 6px 6px;
+  border: 1px solid #4B5268;
+}
+
+/* Desktop Monitor Graphic */
+.deviceGraphicMonitor {
+  width: 78px;
+  height: 64px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  filter: drop-shadow(0 0 16px rgba(255, 180, 50, 0.35));
+}
+
+.monitorScreen {
+  width: 74px;
+  height: 46px;
+  background: #0D0F16;
+  border: 2px solid #373C4E;
+  border-radius: 6px;
+  box-shadow: 0 0 20px rgba(255, 159, 28, 0.2), inset 0 0 10px rgba(0,0,0,0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.monitorStand {
+  width: 10px;
+  height: 10px;
+  background: #252834;
+}
+
+.monitorBase {
+  width: 34px;
+  height: 4px;
+  background: #373C4E;
+  border-radius: 2px;
+}
+
+/* Device Labeling */
+.deviceNameText {
+  font-size: 15px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin: 0;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.deviceSubText {
+  font-size: 12px;
+  font-weight: 500;
+  color: #9CA3AF;
+  margin: 0;
+}
+
+/* ==================================================
+   TRAJECTORY & ROCKET FLIGHT PATH
+   ================================================== */
+.flightTrackArea {
+  position: absolute;
+  left: 70px;
+  right: 70px;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.trajectorySvg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.trajectoryPathBase {
+  stroke: rgba(255, 190, 60, 0.35);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 6;
+  fill: none;
+  animation: trajectoryPulse 4s ease-in-out infinite alternate;
+}
+
+.trajectoryPathGlow {
+  stroke: rgba(255, 159, 28, 0.2);
+  stroke-width: 6;
+  fill: none;
+  filter: blur(4px);
+}
+
+@keyframes trajectoryPulse {
+  0% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
+/* Realistic Rocket Element */
+.rocketPositioner {
+  position: absolute;
+  top: 28%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  z-index: 10;
+  transition: left 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: rocketBob 2.8s ease-in-out infinite alternate;
+}
+
+@keyframes rocketBob {
+  0% { transform: translate(-50%, -54%) rotate(-1deg); }
+  100% { transform: translate(-50%, -46%) rotate(1.5deg); }
+}
+
+/* Exhaust Particle Jet Stream */
+.exhaustJetTrail {
+  position: absolute;
+  right: 88px;
+  width: 170px;
+  height: 16px;
+  background: linear-gradient(270deg, transparent 0%, rgba(255, 107, 53, 0.2) 30%, rgba(255, 180, 50, 0.8) 85%, #FFF4D9 100%);
+  border-radius: 50%;
+  filter: blur(2.5px);
+  animation: exhaustFlicker 0.12s infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes exhaustFlicker {
+  0% { transform: scaleX(0.9) scaleY(0.85); opacity: 0.8; }
+  100% { transform: scaleX(1.15) scaleY(1.1); opacity: 1; }
+}
+
+/* ==================================================
+   TRANSFER INFORMATION CARD (Bottom-Center Glass)
+   ================================================== */
+.transferCardWrapper {
+  position: relative;
+  z-index: 20;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.transferCard {
+  width: 100%;
+  max-width: 580px;
+  background: rgba(14, 17, 24, 0.82);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 200, 87, 0.25);
+  border-radius: 18px;
+  padding: 18px 24px 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7),
+              0 0 30px rgba(255, 159, 28, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cardHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.fileIconBox {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -567,253 +459,290 @@
   flex-shrink: 0;
 }
 
-.featureTitle {
+.fileDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.fileName {
+  font-size: 15px;
   font-weight: 700;
+  color: #FFFFFF;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fileSize {
+  font-size: 13px;
+  font-weight: 500;
+  color: #9CA3AF;
+}
+
+/* Card Progress Bar */
+.cardProgressRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.cardProgressTrack {
+  flex: 1;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.cardProgressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #FF9F1C 0%, #FFC857 60%, #FFE399 100%);
+  border-radius: 999px;
+  box-shadow: 0 0 16px rgba(255, 200, 87, 0.8);
+  transition: width 0.15s ease-out;
+}
+
+.cardPercent {
+  font-family: var(--font-mono, monospace);
+  font-size: 16px;
+  font-weight: 800;
+  color: #FFFFFF;
+  min-width: 42px;
+  text-align: right;
+}
+
+/* Card Metadata Row */
+.cardMetaRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: #9CA3AF;
+  padding-top: 2px;
+}
+
+.metaItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.metaItemHighlight {
   color: #E5E7EB;
 }
 
-.featureDesc {
-  color: #6B7280;
-  font-size: 10px;
+.cancelActionBtn {
+  background: none;
+  border: none;
+  color: #F87171;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: opacity 0.2s;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
-.ambientTagline {
-  position: absolute;
-  bottom: 24px;
-  left: 28px;
-  font-size: 10.5px;
-  letter-spacing: 0.15em;
-  font-weight: 800;
-  color: rgba(255, 255, 255, 0.3);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  pointer-events: none;
-  z-index: 6;
+.cancelActionBtn:hover {
+  opacity: 0.8;
 }
 
-.taglineSub {
-  color: #FF9F1C;
-  letter-spacing: 0.22em;
-  font-size: 8.5px;
-  font-weight: 900;
+/* Bottom Tagline */
+.bottomQuote {
+  font-size: 13px;
+  font-style: italic;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.45);
+  margin: 0;
+  text-align: center;
 }
 
 /* ==================================================
-   SUCCESS VIEW (Refined & Auto-Closing)
+   SUCCESS VIEW (Golden Burst Celebration & Auto-Close)
    ================================================== */
-.successStage {
-  position: relative;
-  z-index: 10;
+.successCard {
+  width: 100%;
+  max-width: 540px;
+  background: rgba(14, 17, 24, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 200, 87, 0.4);
+  border-radius: 20px;
+  padding: 28px 24px 22px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7),
+              0 0 40px rgba(255, 200, 87, 0.25);
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 18px;
-  margin: auto 0;
-}
-
-.successBurstRings {
-  position: relative;
-  width: 120px;
-  height: 120px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.burstRing1 {
-  position: absolute;
-  inset: -16px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 200, 87, 0.4);
-  box-shadow: 0 0 40px rgba(255, 159, 28, 0.35);
-  animation: ringPulse 1.8s ease-out infinite;
-}
-
-.burstRing2 {
-  position: absolute;
-  inset: -32px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 159, 28, 0.2);
-}
-
-.successCircle {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #FFC857 0%, #FF9F1C 60%, #E65100 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #0E1017;
-  box-shadow: 0 0 35px rgba(255, 200, 87, 0.7),
-              0 0 70px rgba(255, 159, 28, 0.35);
-  animation: popSuccess 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  gap: 14px;
+  animation: popSuccess 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
 }
 
 @keyframes popSuccess {
-  0% { transform: scale(0.3); opacity: 0; }
-  75% { transform: scale(1.1); opacity: 1; }
+  0% { transform: scale(0.9); opacity: 0; }
   100% { transform: scale(1); opacity: 1; }
 }
 
-@keyframes ringPulse {
-  0% { transform: scale(0.9); opacity: 0.7; }
-  100% { transform: scale(1.25); opacity: 0; }
+.successIconCircle {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #FFE399 0%, #FFC857 50%, #FF9F1C 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0B0D12;
+  box-shadow: 0 0 30px rgba(255, 200, 87, 0.8);
 }
 
-.successTitle {
-  font-size: 28px;
-  font-weight: 900;
+.successHeading {
+  font-size: 24px;
+  font-weight: 800;
   color: #FFFFFF;
   margin: 0;
-  text-shadow: 0 0 20px rgba(255, 200, 87, 0.4);
+  text-shadow: 0 0 20px rgba(255, 200, 87, 0.5);
 }
 
-.successSubtext {
-  font-size: 15px;
-  color: #D1D5DB;
+.successDetails {
+  font-size: 14.5px;
+  color: #9CA3AF;
   margin: 0;
-}
-
-.viewFilesBtn {
-  margin-top: 6px;
-  padding: 10px 28px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #FFC857 0%, #FF9F1C 50%, #FF6B35 100%);
-  border: none;
-  color: #0B0D12;
-  font-size: 14px;
-  font-weight: 800;
-  cursor: pointer;
-  box-shadow: 0 6px 25px rgba(255, 159, 28, 0.45);
-  transition: all 0.2s ease;
-}
-
-.viewFilesBtn:hover {
-  transform: translateY(-2px);
-  filter: brightness(1.1);
-  box-shadow: 0 10px 30px rgba(255, 159, 28, 0.6);
 }
 
 /* ==================================================
    INTERRUPTED VIEW
    ================================================== */
-.interruptedStage {
-  position: relative;
-  z-index: 10;
+.interruptedCard {
+  width: 100%;
+  max-width: 500px;
+  background: rgba(14, 17, 24, 0.88);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 20px;
+  padding: 26px 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 16px;
-  margin: auto 0;
+  gap: 14px;
 }
 
-.interruptedCapsule {
-  width: 80px;
-  height: 80px;
+.interruptedIconCircle {
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 35%, #EF4444 0%, #991B1B 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   color: #FFFFFF;
-  box-shadow: 0 0 35px rgba(239, 68, 68, 0.5);
-  animation: popSuccess 0.4s ease-out forwards;
+  box-shadow: 0 0 25px rgba(239, 68, 68, 0.6);
 }
 
-.interruptedTitle {
-  font-size: 26px;
-  font-weight: 900;
+.interruptedHeading {
+  font-size: 22px;
+  font-weight: 800;
   color: #F87171;
   margin: 0;
 }
 
-.interruptedSubtext {
-  font-size: 14.5px;
-  color: #9CA3AF;
-  max-width: 380px;
-  margin: 0;
-}
-
-.interruptedActions {
+.interruptedActionsRow {
   display: flex;
   gap: 10px;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .retryBtn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 10px 24px;
-  border-radius: 11px;
+  gap: 6px;
+  padding: 8px 20px;
+  border-radius: 10px;
   background: rgba(59, 130, 246, 0.15);
   border: 1px solid rgba(59, 130, 246, 0.5);
   color: #60A5FA;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
-.retryBtn:hover {
-  background: rgba(59, 130, 246, 0.25);
-  border-color: rgba(59, 130, 246, 0.8);
+.closeBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #E5E7EB;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ==================================================
-   RESPONSIVE MOBILE LAYOUT
+   RESPONSIVE MOBILE STYLES
    ================================================== */
 @media (max-width: 768px) {
   .overlayBackdrop {
-    padding: 24px 16px 20px;
+    padding: 16px 14px 18px;
   }
-  .stageContainer {
-    flex-direction: column;
-    justify-content: center;
-    gap: 16px;
-    padding: 6px 0;
+  .orbitalStage {
+    height: 160px;
   }
-  .trajectoryStage {
-    width: 100%;
-    height: 70px;
-    margin: 0;
+  .deviceNode {
+    width: 100px;
   }
-  .capsuleRocket {
-    right: 30%;
+  .orbitalRingsContainer {
+    width: 130px;
+    height: 130px;
+    top: 30px;
   }
-  .ambientFeatures,
-  .ambientTagline {
+  .ring1 { width: 80px; height: 80px; }
+  .ring2 { width: 105px; height: 105px; }
+  .ring3 { width: 130px; height: 130px; }
+  .deviceGraphicLaptop { width: 64px; height: 44px; }
+  .laptopScreen { width: 54px; height: 34px; }
+  .laptopBase { width: 62px; height: 5px; }
+  .deviceGraphicMonitor { width: 62px; height: 50px; }
+  .monitorScreen { width: 58px; height: 36px; }
+  .deviceNameText { font-size: 13px; }
+  .mainHeaderTitle { font-size: 24px; }
+  .mainHeaderSubtitle { font-size: 13px; }
+  .transferCard {
+    padding: 14px 16px 12px;
+  }
+  .cardMetaRow {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .bottomQuote {
     display: none;
-  }
-  .mainTitle {
-    font-size: 21px;
-  }
-  .hudSection {
-    padding: 16px 18px;
-    border-radius: 18px;
   }
 }
 
-/* ==================================================
-   ACCESSIBILITY: REDUCED MOTION
-   ================================================== */
+/* Accessibility: Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
   .overlayBackdrop,
-  .ambientGlowLeft,
-  .ambientGlowRight,
-  .particle,
-  .receiverLightRing,
-  .travelCard,
-  .capsuleRocket,
-  .ionThruster,
-  .burstRing1,
-  .burstRing2,
-  .successCircle,
-  .interruptedCapsule {
+  .sunlightGlowRight,
+  .ring1,
+  .ring2,
+  .ring3,
+  .trajectoryPathBase,
+  .rocketPositioner,
+  .exhaustJetTrail,
+  .successCard {
     animation: none !important;
   }
 }

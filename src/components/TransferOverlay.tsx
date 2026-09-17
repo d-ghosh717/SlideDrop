@@ -3,20 +3,21 @@
 import React, { useEffect, useState, useRef } from "react";
 import styles from "./TransferOverlay.module.css";
 import {
-  Laptop,
-  Smartphone,
-  Check,
-  AlertTriangle,
   FileText,
   Image as ImageIcon,
   Film,
   File,
+  Settings,
+  Send,
+  DownloadCloud,
+  History,
   RotateCcw,
   X,
-  ShieldCheck,
   Zap,
-  Infinity as InfinityIcon,
-  Lock
+  Clock,
+  Navigation,
+  Check,
+  AlertTriangle
 } from "lucide-react";
 
 export type TransferOverlayState =
@@ -49,7 +50,132 @@ function formatSize(bytes: number): string {
   if (bytes <= 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec <= 0) return "32 MB/s";
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(0)} KB/s`;
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(0)} MB/s`;
+}
+
+function formatRemainingTime(seconds: number): string {
+  if (seconds <= 0) return "00:00:01 remaining";
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${pad(hrs)}:${pad(mins)}:${pad(secs)} remaining`;
+}
+
+/* ==================================================
+   REALISTIC SLIDEDROP SVG ROCKET
+   Precision Dark Metallic Aerospace Capsule with Gold Accents
+   ================================================== */
+function RealisticRocketSvg({ isReverse = false }: { isReverse?: boolean }) {
+  return (
+    <svg
+      width="100"
+      height="40"
+      viewBox="0 0 100 40"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{
+        transform: isReverse ? "scaleX(-1)" : "none",
+        filter: "drop-shadow(0 0 14px rgba(255, 180, 50, 0.45))",
+      }}
+    >
+      <defs>
+        <linearGradient id="rocketBodyMetal" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#434B5C" />
+          <stop offset="25%" stopColor="#252A36" />
+          <stop offset="65%" stopColor="#141720" />
+          <stop offset="100%" stopColor="#0B0D12" />
+        </linearGradient>
+        <linearGradient id="rocketGoldAccent" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#D97706" />
+          <stop offset="50%" stopColor="#FFC857" />
+          <stop offset="100%" stopColor="#FFE399" />
+        </linearGradient>
+        <linearGradient id="rocketCockpitGlass" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#090B10" />
+          <stop offset="50%" stopColor="#1F2937" />
+          <stop offset="100%" stopColor="#0F172A" />
+        </linearGradient>
+      </defs>
+
+      {/* Top Swept Stabilizer Fin */}
+      <path
+        d="M16 16L8 5C7 4 10 3 13 4L32 15H16Z"
+        fill="#181B24"
+        stroke="#FFC857"
+        strokeWidth="0.85"
+        strokeOpacity="0.7"
+      />
+
+      {/* Bottom Swept Stabilizer Fin */}
+      <path
+        d="M16 24L8 35C7 36 10 37 13 36L32 25H16Z"
+        fill="#181B24"
+        stroke="#FFC857"
+        strokeWidth="0.85"
+        strokeOpacity="0.7"
+      />
+
+      {/* Main Aerodynamic Dark Metallic Fuselage */}
+      <path
+        d="M14 15C14 15 42 12 68 13C78 13.5 88 17.5 96 20C88 22.5 78 26.5 68 27C42 28 14 25 14 25L12 20L14 15Z"
+        fill="url(#rocketBodyMetal)"
+        stroke="#374151"
+        strokeWidth="0.85"
+      />
+
+      {/* Specular Spine Highlight */}
+      <path
+        d="M18 15.5C40 13.5 64 14.5 78 17.5C66 16 40 15 18 15.5Z"
+        fill="#FFFFFF"
+        opacity="0.3"
+      />
+
+      {/* Gold Ring Band Accents */}
+      <path
+        d="M46 13.3C46 13.3 50 13.4 50 13.4C50 19 50 21 50 26.6C50 26.6 46 26.7 46 26.7Z"
+        fill="url(#rocketGoldAccent)"
+      />
+      <path
+        d="M66 14C66 14 69 14.3 69 14.3C69 19 69 21 69 25.7C69 25.7 66 26 66 26Z"
+        fill="url(#rocketGoldAccent)"
+      />
+
+      {/* Golden Nose Cone */}
+      <path
+        d="M76 15.5C84 17 92 19 97 20C92 21 84 23 76 24.5C78.5 21.5 78.5 18.5 76 15.5Z"
+        fill="url(#rocketGoldAccent)"
+        stroke="#FFE399"
+        strokeWidth="0.6"
+      />
+
+      {/* Cockpit Windshield */}
+      <path
+        d="M52 17.5C60 17 68 18 72 19.5C68 20 60 20 52 19.5V17.5Z"
+        fill="url(#rocketCockpitGlass)"
+        stroke="#FFC857"
+        strokeWidth="0.6"
+      />
+
+      {/* Mid Stabilizer Wing */}
+      <path
+        d="M24 19L12 18L10 20L12 22L24 21Z"
+        fill="#262C3A"
+        stroke="#FFC857"
+        strokeWidth="0.6"
+      />
+
+      {/* Propulsion Engine Nozzle */}
+      <rect x="10" y="17.5" width="4" height="5" rx="1" fill="#FF9F1C" />
+    </svg>
+  );
 }
 
 export function TransferOverlay({
@@ -69,41 +195,36 @@ export function TransferOverlay({
   onClose,
 }: TransferOverlayProps) {
   // Speed & ETA estimation
-  const [etaText, setEtaText] = useState<string>("");
+  const [speed, setSpeed] = useState<number>(0);
+  const [etaSeconds, setEtaSeconds] = useState<number>(18);
   const lastTimeRef = useRef<number>(Date.now());
   const lastBytesRef = useRef<number>(0);
-  const speedRef = useRef<number>(0);
 
-  // Stable ref for onClose to guarantee auto-close timer fires
+  // Stable ref for auto-close to reliably trigger
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  // Real-time speed & ETA calculation
+  // Real-time speed & countdown calculation
   useEffect(() => {
     if (!isOpen || (state !== "sending" && state !== "receiving")) {
       lastBytesRef.current = 0;
-      setEtaText("");
       return;
     }
 
     const now = Date.now();
     const timeDelta = (now - lastTimeRef.current) / 1000;
 
-    if (timeDelta >= 0.5) {
+    if (timeDelta >= 0.4) {
       const bytesDelta = transferredBytes - lastBytesRef.current;
       if (bytesDelta > 0) {
         const currentSpeed = bytesDelta / timeDelta;
-        speedRef.current = speedRef.current === 0 ? currentSpeed : speedRef.current * 0.7 + currentSpeed * 0.3;
+        setSpeed((prev) => (prev === 0 ? currentSpeed : prev * 0.6 + currentSpeed * 0.4));
         const remainingBytes = Math.max(0, totalBytes - transferredBytes);
-        if (speedRef.current > 0 && remainingBytes > 0) {
-          const secondsLeft = Math.ceil(remainingBytes / speedRef.current);
-          if (secondsLeft > 60) {
-            setEtaText(`~${Math.ceil(secondsLeft / 60)}m left`);
-          } else {
-            setEtaText(`~${secondsLeft}s left`);
-          }
+        if (currentSpeed > 0 && remainingBytes > 0) {
+          const secs = Math.ceil(remainingBytes / currentSpeed);
+          setEtaSeconds(secs);
         }
       }
       lastTimeRef.current = now;
@@ -111,7 +232,7 @@ export function TransferOverlay({
     }
   }, [isOpen, state, transferredBytes, totalBytes]);
 
-  // CRITICAL FIX: Auto-close on completed state after 1.8 seconds reliably
+  // CRITICAL FIX: Auto-close overlay after 1.8 seconds on success
   useEffect(() => {
     if (state === "completed" && isOpen) {
       const timer = setTimeout(() => {
@@ -123,7 +244,7 @@ export function TransferOverlay({
     }
   }, [state, isOpen]);
 
-  // Handle ESC key to dismiss completed or failed screens
+  // ESC key listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isOpen && (state === "completed" || state === "failed" || state === "cancelled")) {
@@ -140,290 +261,258 @@ export function TransferOverlay({
   const isFailed = state === "failed" || state === "cancelled";
   const isSending = direction === "send";
   const displayPercent = Math.min(100, Math.max(0, Math.round(percent)));
-  const transportLabel = transportMethod === "p2p" ? "Direct P2P" : "Secure Relay";
+  const transportLabel = transportMethod === "p2p" ? "Secure P2P Transfer" : "Secure Relay Transfer";
 
-  // Dynamic titles
-  const targetDevice = isSending ? (recipientName || "Remote Device") : (senderName || "Remote Device");
+  // Calculate rocket flight position along the trajectory (from 15% to 85%)
+  const flightProgress = Math.min(100, Math.max(0, percent));
+  const rocketLeftPercent = 18 + (flightProgress / 100) * 64;
+
+  const sourceName = isSending ? (senderName || "MacBook Air") : (senderName || "Remote Device");
+  const destName = isSending ? (recipientName || "DESKTOP-7F3K2") : (recipientName || "This Device");
+
+  // File Icon helper
+  const renderIcon = () => {
+    const summary = itemsSummary.toLowerCase();
+    if (summary.endsWith(".png") || summary.endsWith(".jpg") || summary.endsWith(".jpeg") || summary.endsWith(".webp")) {
+      return <ImageIcon size={20} />;
+    }
+    if (summary.endsWith(".mp4") || summary.endsWith(".mov") || summary.endsWith(".webm")) {
+      return <Film size={20} />;
+    }
+    return <FileText size={20} />;
+  };
 
   return (
     <div
       className={styles.overlayBackdrop}
       role="dialog"
       aria-modal="true"
-      aria-label="SlideDrop File Transfer"
+      aria-label="SlideDrop File Transfer Experience"
     >
-      {/* ==================================================
-          PROCEDURAL SUBTLE ANIMATED BACKGROUND
-          ================================================== */}
-      <div className={styles.cosmicBg}>
-        <div className={styles.orbitalGrid} />
-        <div className={styles.ambientGlowLeft} />
-        <div className={styles.ambientGlowRight} />
-        <div className={styles.particleLayer}>
-          <div className={styles.particle} />
-          <div className={styles.particle} />
-          <div className={styles.particle} />
-          <div className={styles.particle} />
-          <div className={styles.particle} />
-          <div className={styles.particle} />
-          <div className={styles.particle} />
-          <div className={styles.particle} />
+      {/* Sunlight Golden Atmosphere Flare */}
+      <div className={styles.sunlightGlowRight} />
+
+      {/* Top Header Bar */}
+      <header className={styles.topNavBar}>
+        <div className={styles.brandLeft}>
+          <div className={styles.brandIcon}>
+            <svg width="18" height="18" viewBox="0 0 36 36" fill="none">
+              <path d="M8 13.5H23C24.4 13.5 25.5 12.4 25.5 11H9C7.6 11 6.5 12.1 8 13.5Z" fill="#0B0D12" />
+              <path d="M28 22.5H13C11.6 22.5 10.5 23.6 10.5 25H27C28.4 25 29.5 23.9 28 22.5Z" fill="#0B0D12" />
+            </svg>
+          </div>
+          <span className={styles.brandText}>SlideDrop</span>
         </div>
+
+        <nav className={styles.navTabs}>
+          <span className={`${styles.navTab} ${isSending ? styles.navTabActive : ""}`}>
+            <Send size={14} />
+            <span>Send</span>
+          </span>
+          <span className={`${styles.navTab} {!isSending ? styles.navTabActive : ""}`}>
+            <DownloadCloud size={14} />
+            <span>Receive</span>
+          </span>
+          <span className={styles.navTab}>
+            <History size={14} />
+            <span>History</span>
+          </span>
+        </nav>
+
+        <button className={styles.settingsBtn} title="Settings" aria-label="Settings">
+          <Settings size={18} />
+        </button>
+      </header>
+
+      {/* Main Title & Subtitle */}
+      <div className={styles.titleSection}>
+        <h1 className={styles.mainHeaderTitle}>
+          {isCompleted
+            ? "Transfer Complete"
+            : isFailed
+            ? "Transfer Interrupted"
+            : isSending
+            ? "Sending Files"
+            : "Receiving Files"}
+        </h1>
+        <p className={styles.mainHeaderSubtitle}>Fast. Private. Hassle-Free.</p>
       </div>
 
-      {/* Header Info */}
-      {!isCompleted && !isFailed && (
-        <header className={styles.headerSection}>
-          <h1 className={styles.mainTitle}>
-            {state === "preparing" ? "Connecting to " : isSending ? "Sending files to " : "Receiving files from "}
-            <span className={styles.deviceHighlight}>{targetDevice}</span>
-            ...
-          </h1>
-          <p className={styles.subtitle}>
-            <span>{itemsSummary || "1 file"}</span>
-            {totalBytes > 0 && (
-              <>
-                <span className={styles.subtitleDot}>•</span>
-                <span>{formatSize(totalBytes)}</span>
-              </>
-            )}
-            <span className={styles.subtitleDot}>•</span>
-            <span>{transportLabel}</span>
-          </p>
-        </header>
-      )}
-
-      {/* Center Cinematic Stage */}
-      {!isCompleted && !isFailed && (
-        <main className={styles.stageContainer}>
-          {/* Sender Node (Left: Laptop) */}
-          <div className={styles.deviceNode}>
-            <div className={styles.deviceBadge}>
-              <Laptop size={14} color="#FF9F1C" />
-              <span>{isSending ? (senderName || "MacBook") : (senderName || "Remote Device")}</span>
-            </div>
-            <div className={styles.laptopWrapper}>
-              <div className={styles.laptopScreen}>
-                {/* Embedded SlideDrop Logo on screen */}
-                <svg width="24" height="24" viewBox="0 0 40 40" fill="none">
-                  <rect x="6" y="11" width="22" height="6" rx="3" fill="#FF9F1C" />
-                  <rect x="12" y="23" width="22" height="6" rx="3" fill="#FFC857" />
-                </svg>
-              </div>
-              <div className={styles.laptopBase} />
-            </div>
+      {/* Main Orbital Flight Stage */}
+      <main className={styles.orbitalStage}>
+        {/* Source Device (Left: Laptop) */}
+        <div className={styles.deviceNode}>
+          <div className={styles.orbitalRingsContainer}>
+            <div className={styles.ring1} />
+            <div className={styles.ring2} />
+            <div className={styles.ring3} />
           </div>
 
-          {/* Center Trajectory Stage */}
-          <div className={styles.trajectoryStage}>
-            {/* Plasma Trajectory Line */}
-            <div className={styles.plasmaBeam} />
-
-            {/* Traveling Frosted File Badges */}
-            <div className={styles.travelFilesTrack}>
-              <div className={styles.travelCard} title="Image Payload">
-                <ImageIcon size={17} />
-                <span>IMG</span>
-              </div>
-              <div className={styles.travelCard} title="PDF Document">
-                <FileText size={17} />
-                <span>PDF</span>
-              </div>
-              <div className={styles.travelCard} title="Video Payload">
-                <Film size={17} />
-                <span>VID</span>
-              </div>
-              <div className={styles.travelCard} title="Document Data">
-                <File size={17} />
-                <span>DOC</span>
-              </div>
+          <div className={styles.deviceGraphicLaptop}>
+            <div className={styles.laptopScreen}>
+              <svg width="18" height="18" viewBox="0 0 36 36" fill="none">
+                <rect x="6" y="11" width="22" height="5" rx="2.5" fill="#FF9F1C" />
+                <rect x="11" y="21" width="22" height="5" rx="2.5" fill="#FFC857" />
+              </svg>
             </div>
-
-            {/* Realistic SlideDrop Courier Capsule */}
-            <div className={styles.capsuleRocket}>
-              <div className={styles.ionThruster} />
-              <div className={styles.courierCapsule}>
-                <div className={styles.capsuleSeam} />
-                <svg width="18" height="14" viewBox="0 0 36 36" fill="none" style={{ position: "relative", zIndex: 2 }}>
-                  <path d="M6 13.5H23C24.4 13.5 25.5 12.4 25.5 11H9C7.6 11 6.5 12.1 6 13.5Z" fill="#FF9F1C" />
-                  <path d="M30 22.5H13C11.6 22.5 10.5 23.6 10.5 25H27C28.4 25 29.5 23.9 30 22.5Z" fill="#FF6B35" />
-                </svg>
-                <div className={styles.capsuleSensorLens} />
-              </div>
-            </div>
+            <div className={styles.laptopBase} />
           </div>
 
-          {/* Destination Node (Right: Phone + Ambient Light Ring) */}
-          <div className={styles.deviceNode}>
-            <div className={styles.deviceBadge}>
-              <Smartphone size={14} color="#FF9F1C" />
-              <span>{isSending ? (recipientName || "VIVO") : (recipientName || "This Device")}</span>
-            </div>
-            <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div className={styles.receiverLightRing} />
-              {/* Phone Model */}
-              <div className={styles.phoneWrapper}>
-                <svg width="20" height="20" viewBox="0 0 40 40" fill="none">
-                  <rect x="6" y="11" width="22" height="6" rx="3" fill="#FF9F1C" />
-                  <rect x="12" y="23" width="22" height="6" rx="3" fill="#FFC857" />
-                </svg>
-              </div>
-            </div>
-          </div>
-        </main>
-      )}
-
-      {/* HUD Progress Control Bar */}
-      {!isCompleted && !isFailed && (
-        <div className={styles.hudSection}>
-          <div className={styles.hudProgressRow}>
-            <div className={styles.progressBarTrack}>
-              <div
-                className={styles.progressBarFill}
-                style={{ width: `${displayPercent}%` }}
-              />
-            </div>
-            <div className={styles.percentLabel}>{displayPercent}%</div>
-          </div>
-
-          <div className={styles.hudMetaRow}>
-            <span>
-              {formatSize(transferredBytes)} / {formatSize(totalBytes || transferredBytes)}
-            </span>
-            {etaText && (
-              <>
-                <span className={styles.subtitleDot}>•</span>
-                <span>{etaText}</span>
-              </>
-            )}
-            <span className={styles.subtitleDot}>•</span>
-            <span>{transportLabel}</span>
-          </div>
-
-          {onCancel && (
-            <button
-              className={styles.cancelTransferBtn}
-              onClick={onCancel}
-              type="button"
-              aria-label="Cancel active transfer"
-            >
-              <X size={15} />
-              <span>Cancel Transfer</span>
-            </button>
-          )}
+          <p className={styles.deviceNameText}>{sourceName}</p>
+          <p className={styles.deviceSubText}>{isSending ? "You" : "Sender"}</p>
         </div>
-      )}
 
-      {/* Completion View (Auto-Closes in 1.8s) */}
-      {isCompleted && (
-        <div className={styles.successStage}>
-          <div className={styles.successBurstRings}>
-            <div className={styles.burstRing1} />
-            <div className={styles.burstRing2} />
-            <div className={styles.successCircle}>
-              <Check size={44} strokeWidth={3.5} />
-            </div>
-          </div>
+        {/* Center Flight Track with Curved Trajectory & Realistic Rocket */}
+        <div className={styles.flightTrackArea}>
+          {/* Curved SVG Trajectory Line */}
+          <svg className={styles.trajectorySvg} viewBox="0 0 900 200" preserveAspectRatio="none">
+            <path
+              d="M 50 140 Q 450 30 850 140"
+              className={styles.trajectoryPathGlow}
+            />
+            <path
+              d="M 50 140 Q 450 30 850 140"
+              className={styles.trajectoryPathBase}
+            />
+          </svg>
 
-          <h2 className={styles.successTitle}>Transfer Complete!</h2>
-          <p className={styles.successSubtext}>
-            {itemsSummary || "Files"} {totalBytes > 0 && `(${formatSize(totalBytes)})`}{" "}
-            {isSending ? `sent to ${targetDevice}` : `received from ${targetDevice}`}
-          </p>
-
-          <div className={styles.travelFilesTrack} style={{ position: "static", transform: "none", gap: "12px" }}>
-            <div className={styles.travelCard}><ImageIcon size={17} /><span>IMG</span></div>
-            <div className={styles.travelCard}><FileText size={17} /><span>PDF</span></div>
-            <div className={styles.travelCard}><Film size={17} /><span>VID</span></div>
-            <div className={styles.travelCard}><File size={17} /><span>DOC</span></div>
-          </div>
-
-          {onClose && (
-            <button
-              className={styles.viewFilesBtn}
-              onClick={() => {
-                if (onCloseRef.current) onCloseRef.current();
+          {/* Traveling Rocket with Particle Exhaust */}
+          {!isCompleted && !isFailed && (
+            <div
+              className={styles.rocketPositioner}
+              style={{
+                left: `${rocketLeftPercent}%`,
               }}
-              type="button"
             >
-              View Files
-            </button>
+              <div className={styles.exhaustJetTrail} />
+              <RealisticRocketSvg isReverse={!isSending} />
+            </div>
           )}
         </div>
-      )}
 
-      {/* Interrupted View */}
-      {isFailed && (
-        <div className={styles.interruptedStage}>
-          <div className={styles.interruptedCapsule}>
-            <AlertTriangle size={44} strokeWidth={2.8} />
+        {/* Destination Device (Right: Desktop Monitor) */}
+        <div className={styles.deviceNode}>
+          <div className={styles.orbitalRingsContainer}>
+            <div className={styles.ring1} />
+            <div className={styles.ring2} />
+            <div className={styles.ring3} />
           </div>
 
-          <h2 className={styles.interruptedTitle}>Transfer Interrupted</h2>
-          <p className={styles.interruptedSubtext}>
-            {errorMessage || "Connection lost. Your files were not fully transferred."}
-          </p>
-
-          <div className={styles.interruptedActions}>
-            {onRetry && isSending && (
-              <button className={styles.retryBtn} onClick={onRetry} type="button">
-                <RotateCcw size={15} />
-                <span>Retry</span>
-              </button>
-            )}
-            {onClose && (
-              <button
-                className={styles.cancelTransferBtn}
-                onClick={() => {
-                  if (onCloseRef.current) onCloseRef.current();
-                }}
-                type="button"
-              >
-                <X size={15} />
-                <span>Close</span>
-              </button>
-            )}
+          <div className={styles.deviceGraphicMonitor}>
+            <div className={styles.monitorScreen}>
+              <svg width="18" height="18" viewBox="0 0 36 36" fill="none">
+                <rect x="6" y="11" width="22" height="5" rx="2.5" fill="#FF9F1C" />
+                <rect x="11" y="21" width="22" height="5" rx="2.5" fill="#FFC857" />
+              </svg>
+            </div>
+            <div className={styles.monitorStand} />
+            <div className={styles.monitorBase} />
           </div>
+
+          <p className={styles.deviceNameText}>{destName}</p>
+          <p className={styles.deviceSubText}>{isCompleted ? "Completed" : isSending ? "Receiving..." : "You"}</p>
         </div>
-      )}
+      </main>
 
-      {/* Ambient Side Tagline (Bottom Left) */}
-      <div className={styles.ambientTagline}>
-        <span>FAST</span>
-        <span>PRIVATE</span>
-        <span>BEAUTIFUL</span>
-        <span className={styles.taglineSub}>— SLIDEDROP</span>
-      </div>
+      {/* Bottom Center Transfer Information Card / Success / Interrupted */}
+      <div className={styles.transferCardWrapper}>
+        {/* Active Transfer Card */}
+        {!isCompleted && !isFailed && (
+          <div className={styles.transferCard}>
+            <div className={styles.cardHeaderRow}>
+              <div className={styles.fileIconBox}>{renderIcon()}</div>
+              <div className={styles.fileDetails}>
+                <span className={styles.fileName}>{itemsSummary || "project.zip"}</span>
+                <span className={styles.fileSize}>{formatSize(totalBytes || transferredBytes)}</span>
+              </div>
+              {onCancel && (
+                <button
+                  className={styles.cancelActionBtn}
+                  onClick={onCancel}
+                  type="button"
+                  aria-label="Cancel Transfer"
+                >
+                  <X size={14} />
+                  <span>Cancel</span>
+                </button>
+              )}
+            </div>
 
-      {/* Ambient Side Feature Badges (Bottom Right) */}
-      <div className={styles.ambientFeatures}>
-        <div className={styles.featureItem}>
-          <div className={styles.featureIconBox}>
-            <Lock size={12} />
+            <div className={styles.cardProgressRow}>
+              <div className={styles.cardProgressTrack}>
+                <div
+                  className={styles.cardProgressFill}
+                  style={{ width: `${displayPercent}%` }}
+                />
+              </div>
+              <span className={styles.cardPercent}>{displayPercent}%</span>
+            </div>
+
+            <div className={styles.cardMetaRow}>
+              <div className={styles.metaItem}>
+                <Zap size={14} color="#FFC857" />
+                <span className={styles.metaItemHighlight}>{formatSpeed(speed)}</span>
+              </div>
+              <div className={styles.metaItem}>
+                <Clock size={14} color="#FFC857" />
+                <span>{formatRemainingTime(etaSeconds)}</span>
+              </div>
+              <div className={styles.metaItem}>
+                <Navigation size={14} color="#FFC857" />
+                <span>{transportLabel}</span>
+              </div>
+            </div>
           </div>
-          <div>
-            <div className={styles.featureTitle}>Secure &amp; Private</div>
-            <div className={styles.featureDesc}>Direct P2P connection</div>
+        )}
+
+        {/* Completed Celebration Card (Auto-closes in 1.8s) */}
+        {isCompleted && (
+          <div className={styles.successCard}>
+            <div className={styles.successIconCircle}>
+              <Check size={36} strokeWidth={3.5} />
+            </div>
+            <h2 className={styles.successHeading}>Transfer Complete!</h2>
+            <p className={styles.successDetails}>
+              {itemsSummary || "Files"} ({formatSize(totalBytes)}) {isSending ? `delivered to ${destName}` : `received from ${sourceName}`}
+            </p>
           </div>
-        </div>
-        <div className={styles.featureItem}>
-          <div className={styles.featureIconBox}>
-            <InfinityIcon size={12} />
+        )}
+
+        {/* Interrupted Card */}
+        {isFailed && (
+          <div className={styles.interruptedCard}>
+            <div className={styles.interruptedIconCircle}>
+              <AlertTriangle size={34} strokeWidth={2.8} />
+            </div>
+            <h2 className={styles.interruptedHeading}>Transfer Interrupted</h2>
+            <p style={{ color: "#9CA3AF", fontSize: "14px", margin: 0 }}>
+              {errorMessage || "Connection lost. Your file was not fully transferred."}
+            </p>
+            <div className={styles.interruptedActionsRow}>
+              {onRetry && isSending && (
+                <button className={styles.retryBtn} onClick={onRetry} type="button">
+                  <RotateCcw size={14} />
+                  <span>Retry</span>
+                </button>
+              )}
+              {onClose && (
+                <button
+                  className={styles.closeBtn}
+                  onClick={() => {
+                    if (onCloseRef.current) onCloseRef.current();
+                  }}
+                  type="button"
+                >
+                  <X size={14} />
+                  <span>Close</span>
+                </button>
+              )}
+            </div>
           </div>
-          <div>
-            <div className={styles.featureTitle}>No File Size Limit</div>
-            <div className={styles.featureDesc}>Share anything</div>
-          </div>
-        </div>
-        <div className={styles.featureItem}>
-          <div className={styles.featureIconBox}>
-            <ShieldCheck size={12} />
-          </div>
-          <div>
-            <div className={styles.featureTitle}>End-to-End Encrypted</div>
-            <div className={styles.featureDesc}>Your files, your control</div>
-          </div>
-        </div>
+        )}
+
+        {/* Bottom Tagline */}
+        <p className={styles.bottomQuote}>&ldquo;Big files. Small distance.&rdquo;</p>
       </div>
     </div>
   );
