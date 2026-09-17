@@ -71,9 +71,10 @@ function formatRemainingTime(seconds: number): string {
 
 /* ==================================================
    REALISTIC SLIDEDROP SVG ROCKET
-   Precision Dark Metallic Aerospace Capsule with Gold Accents
+   Always points FORWARD to the Right (Towards Destination)
+   With Exhaust Trailing on the Left (Behind toward Source)
    ================================================== */
-function RealisticRocketSvg({ isReverse = false }: { isReverse?: boolean }) {
+function RealisticRocketSvg() {
   return (
     <svg
       width="100"
@@ -82,7 +83,6 @@ function RealisticRocketSvg({ isReverse = false }: { isReverse?: boolean }) {
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       style={{
-        transform: isReverse ? "scaleX(-1)" : "none",
         filter: "drop-shadow(0 0 14px rgba(255, 180, 50, 0.45))",
       }}
     >
@@ -263,12 +263,29 @@ export function TransferOverlay({
   const displayPercent = Math.min(100, Math.max(0, Math.round(percent)));
   const transportLabel = transportMethod === "p2p" ? "Secure P2P Transfer" : "Secure Relay Transfer";
 
-  // Calculate rocket flight position along the trajectory (from 15% to 85%)
-  const flightProgress = Math.min(100, Math.max(0, percent));
-  const rocketLeftPercent = 18 + (flightProgress / 100) * 64;
+  // PHYSICAL DIRECTION RULE:
+  // SOURCE is ALWAYS on the LEFT.
+  // DESTINATION is ALWAYS on the RIGHT.
+  // ROCKET ALWAYS TRAVELS LEFT -> RIGHT (Nose pointing Right, Exhaust on Left).
+  const sourceDeviceName = isSending ? (senderName || "MacBook Air") : (senderName || "Remote Device");
+  const sourceDeviceSub = isSending ? "You (Sender)" : "Sender";
 
-  const sourceName = isSending ? (senderName || "MacBook Air") : (senderName || "Remote Device");
-  const destName = isSending ? (recipientName || "DESKTOP-7F3K2") : (recipientName || "This Device");
+  const destDeviceName = isSending ? (recipientName || "DESKTOP-7F3K2") : (recipientName || "This Device");
+  const destDeviceSub = isSending ? "Receiving..." : "You (Capture Zone)";
+
+  // Calculate rocket flight position along the trajectory (from 16% to 84%)
+  const flightProgress = Math.min(100, Math.max(0, percent));
+  const rocketLeftPercent = 16 + (flightProgress / 100) * 68;
+
+  // Aerodynamic Banking Pitch angle along the curved arc
+  // Ascending phase (0% - 40%): -3deg to 0deg | Descending phase (40% - 100%): 0deg to +3.5deg
+  const calculatedPitch =
+    flightProgress < 40
+      ? -3.5 + (flightProgress / 40) * 3.5
+      : ((flightProgress - 40) / 60) * 4.0;
+
+  // Receiving Data Capture Zone threshold
+  const isCaptureZoneActive = !isSending && flightProgress >= 65;
 
   // File Icon helper
   const renderIcon = () => {
@@ -309,7 +326,7 @@ export function TransferOverlay({
             <Send size={14} />
             <span>Send</span>
           </span>
-          <span className={`${styles.navTab} {!isSending ? styles.navTabActive : ""}`}>
+          <span className={`${styles.navTab} ${!isSending ? styles.navTabActive : ""}`}>
             <DownloadCloud size={14} />
             <span>Receive</span>
           </span>
@@ -335,12 +352,16 @@ export function TransferOverlay({
             ? "Sending Files"
             : "Receiving Files"}
         </h1>
-        <p className={styles.mainHeaderSubtitle}>Fast. Private. Hassle-Free.</p>
+        <p className={styles.mainHeaderSubtitle}>
+          {isCompleted
+            ? `Delivered to ${destDeviceName}`
+            : `${sourceDeviceName} → ${destDeviceName} • ${itemsSummary || "Files"}`}
+        </p>
       </div>
 
       {/* Main Orbital Flight Stage */}
       <main className={styles.orbitalStage}>
-        {/* Source Device (Left: Laptop) */}
+        {/* Source Device (Left: Laptop / Sender) */}
         <div className={styles.deviceNode}>
           <div className={styles.orbitalRingsContainer}>
             <div className={styles.ring1} />
@@ -358,40 +379,65 @@ export function TransferOverlay({
             <div className={styles.laptopBase} />
           </div>
 
-          <p className={styles.deviceNameText}>{sourceName}</p>
-          <p className={styles.deviceSubText}>{isSending ? "You" : "Sender"}</p>
+          <p className={styles.deviceNameText}>{sourceDeviceName}</p>
+          <p className={styles.deviceSubText}>{sourceDeviceSub}</p>
         </div>
 
-        {/* Center Flight Track with Curved Trajectory & Realistic Rocket */}
+        {/* Center Flight Track with Curved Trajectory & Realistic Forward Rocket */}
         <div className={styles.flightTrackArea}>
-          {/* Curved SVG Trajectory Line */}
+          {/* Curved SVG Trajectory Line & Active Data Stream Particles */}
           <svg className={styles.trajectorySvg} viewBox="0 0 900 200" preserveAspectRatio="none">
+            {/* Glowing Base Halo */}
             <path
               d="M 50 140 Q 450 30 850 140"
               className={styles.trajectoryPathGlow}
             />
+            {/* Base Dashed Line */}
             <path
               d="M 50 140 Q 450 30 850 140"
               className={styles.trajectoryPathBase}
             />
+            {/* Active Flowing Data Stream Packets */}
+            {!isCompleted && !isFailed && (
+              <path
+                d="M 50 140 Q 450 30 850 140"
+                className={styles.dataStreamFlowPath}
+              />
+            )}
           </svg>
 
-          {/* Traveling Rocket with Particle Exhaust */}
+          {/* Traveling Forward Rocket with Aerodynamic Pitch & Particle Exhaust */}
           {!isCompleted && !isFailed && (
             <div
               className={styles.rocketPositioner}
               style={{
                 left: `${rocketLeftPercent}%`,
+                transform: `translate(-50%, -50%) rotate(${calculatedPitch}deg)`,
               }}
             >
+              {/* Exhaust Jet Trail (Behind on Left) */}
               <div className={styles.exhaustJetTrail} />
-              <RealisticRocketSvg isReverse={!isSending} />
+
+              {/* Floating Payload Badge */}
+              <div className={styles.payloadBadge} title={itemsSummary}>
+                {renderIcon()}
+              </div>
+
+              {/* Realistic Aerospace Rocket (Facing Forward Right) */}
+              <RealisticRocketSvg />
             </div>
           )}
         </div>
 
-        {/* Destination Device (Right: Desktop Monitor) */}
+        {/* Destination Device (Right: Desktop Monitor / Receiver) */}
         <div className={styles.deviceNode}>
+          {/* Distinctive Data Capture Field (Active on Receiving) */}
+          <div
+            className={`${styles.captureField} ${
+              isCaptureZoneActive ? styles.captureFieldActive : ""
+            }`}
+          />
+
           <div className={styles.orbitalRingsContainer}>
             <div className={styles.ring1} />
             <div className={styles.ring2} />
@@ -409,8 +455,10 @@ export function TransferOverlay({
             <div className={styles.monitorBase} />
           </div>
 
-          <p className={styles.deviceNameText}>{destName}</p>
-          <p className={styles.deviceSubText}>{isCompleted ? "Completed" : isSending ? "Receiving..." : "You"}</p>
+          <p className={styles.deviceNameText}>{destDeviceName}</p>
+          <p className={styles.deviceSubText}>
+            {isCompleted ? "Completed" : destDeviceSub}
+          </p>
         </div>
       </main>
 
@@ -473,7 +521,7 @@ export function TransferOverlay({
             </div>
             <h2 className={styles.successHeading}>Transfer Complete!</h2>
             <p className={styles.successDetails}>
-              {itemsSummary || "Files"} ({formatSize(totalBytes)}) {isSending ? `delivered to ${destName}` : `received from ${sourceName}`}
+              {itemsSummary || "Files"} ({formatSize(totalBytes)}) {isSending ? `delivered to ${destDeviceName}` : `received from ${sourceDeviceName}`}
             </p>
           </div>
         )}

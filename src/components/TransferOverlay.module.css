@@ -251,6 +251,36 @@
   to { transform: rotate(0deg); }
 }
 
+/* ==================================================
+   NEW: DATA CAPTURE FIELD (Receiving Experience)
+   ================================================== */
+.captureField {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 200, 87, 0.16) 0%, rgba(255, 159, 28, 0.04) 50%, transparent 70%);
+  border: 1.5px solid rgba(255, 200, 87, 0.4);
+  box-shadow: 0 0 35px rgba(255, 180, 50, 0.35), inset 0 0 25px rgba(255, 180, 50, 0.2);
+  pointer-events: none;
+  animation: capturePulse 2.2s ease-in-out infinite alternate;
+  z-index: 2;
+}
+
+@keyframes capturePulse {
+  0% { transform: translate(-50%, -50%) scale(0.92); opacity: 0.7; }
+  100% { transform: translate(-50%, -50%) scale(1.08); opacity: 1; }
+}
+
+.captureFieldActive {
+  background: radial-gradient(circle, rgba(255, 220, 100, 0.28) 0%, rgba(255, 159, 28, 0.12) 55%, transparent 75%);
+  border-color: rgba(255, 220, 100, 0.8);
+  box-shadow: 0 0 50px rgba(255, 200, 87, 0.6), inset 0 0 35px rgba(255, 180, 50, 0.4);
+}
+
 /* Laptop Device Graphic */
 .deviceGraphicLaptop {
   width: 82px;
@@ -337,7 +367,7 @@
 }
 
 /* ==================================================
-   TRAJECTORY & ROCKET FLIGHT PATH
+   TRAJECTORY, DATA STREAM & ROCKET FLIGHT PATH
    ================================================== */
 .flightTrackArea {
   position: absolute;
@@ -371,12 +401,28 @@
   filter: blur(4px);
 }
 
+/* Active High-Speed Data Stream Particles */
+.dataStreamFlowPath {
+  stroke: #FFC857;
+  stroke-width: 2;
+  stroke-dasharray: 4 24;
+  stroke-linecap: round;
+  fill: none;
+  animation: dataStreamRun 1.2s linear infinite;
+  filter: drop-shadow(0 0 6px #FF9F1C);
+}
+
+@keyframes dataStreamRun {
+  from { stroke-dashoffset: 56; }
+  to { stroke-dashoffset: 0; }
+}
+
 @keyframes trajectoryPulse {
   0% { opacity: 0.6; }
   100% { opacity: 1; }
 }
 
-/* Realistic Rocket Element */
+/* Realistic Rocket Element with Aerodynamic Banking */
 .rocketPositioner {
   position: absolute;
   top: 28%;
@@ -384,13 +430,7 @@
   display: flex;
   align-items: center;
   z-index: 10;
-  transition: left 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  animation: rocketBob 2.8s ease-in-out infinite alternate;
-}
-
-@keyframes rocketBob {
-  0% { transform: translate(-50%, -54%) rotate(-1deg); }
-  100% { transform: translate(-50%, -46%) rotate(1.5deg); }
+  transition: left 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s ease-out;
 }
 
 /* Exhaust Particle Jet Stream */
@@ -409,6 +449,29 @@
 @keyframes exhaustFlicker {
   0% { transform: scaleX(0.9) scaleY(0.85); opacity: 0.8; }
   100% { transform: scaleX(1.15) scaleY(1.1); opacity: 1; }
+}
+
+/* Floating Payload Badge attached to Rocket */
+.payloadBadge {
+  position: absolute;
+  top: -22px;
+  right: 20px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(14, 18, 26, 0.9);
+  border: 1px solid rgba(255, 200, 87, 0.6);
+  color: #FFC857;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 10px rgba(255, 180, 50, 0.5);
+  animation: payloadFloat 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes payloadFloat {
+  0% { transform: translateY(-2px); }
+  100% { transform: translateY(2px); }
 }
 
 /* ==================================================
@@ -704,7 +767,8 @@
   .deviceNode {
     width: 100px;
   }
-  .orbitalRingsContainer {
+  .orbitalRingsContainer,
+  .captureField {
     width: 130px;
     height: 130px;
     top: 30px;
@@ -739,7 +803,9 @@
   .ring1,
   .ring2,
   .ring3,
+  .captureField,
   .trajectoryPathBase,
+  .dataStreamFlowPath,
   .rocketPositioner,
   .exhaustJetTrail,
   .successCard {
