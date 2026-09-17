@@ -43,7 +43,7 @@
   max-width: 1080px;
   width: 100%;
   margin: 0 auto;
-  padding: 24px 20px 80px;
+  padding: 96px 20px 80px;
   display: flex;
   flex-direction: column;
   gap: 28px;
@@ -52,17 +52,29 @@
 }
 
 /* ==================================================
-   TOP FLOATING HEADER
+   TOP FIXED FLOATING HEADER
    ================================================== */
-.header {
-  position: sticky;
+.headerWrapper {
+  position: fixed;
   top: 16px;
+  left: 0;
+  right: 0;
   z-index: 100;
+  display: flex;
+  justify-content: center;
+  padding: 0 20px;
+  pointer-events: none;
+}
+
+.header {
+  pointer-events: auto;
+  max-width: 1080px;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 20px;
-  background: rgba(13, 17, 23, 0.82);
+  background: rgba(13, 17, 23, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 159, 28, 0.22);
@@ -1531,12 +1543,29 @@
   .transferActions button {
     min-height: 44px;
   }
+
+  .headerWrapper {
+    top: max(10px, env(safe-area-inset-top));
+    padding: 0 16px;
+  }
+
+  .shell {
+    padding: 85px 16px 60px;
+  }
 }
 
 @media (max-width: 480px) {
-  .header {
+  .headerWrapper {
     top: max(8px, env(safe-area-inset-top));
+    padding: 0 12px;
+  }
+
+  .header {
     padding: 10px 14px;
+  }
+
+  .shell {
+    padding: 78px 12px 60px;
   }
 
   .brandTitle {

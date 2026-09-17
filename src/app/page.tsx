@@ -1165,7 +1165,7 @@ export default function Home() {
   if (!isMounted) {
     return (
       <div className={styles.pageContainer}>
-        <div className={styles.shell}>
+        <div className={styles.headerWrapper}>
           <header className={styles.header}>
             <div className={styles.brand}>
               <SlideDropLogo size={36} />
@@ -1176,16 +1176,17 @@ export default function Home() {
             </div>
           </header>
         </div>
+        <div className={styles.shell} />
       </div>
     );
   }
 
   return (
     <div className={styles.pageContainer}>
-      <div className={styles.shell}>
-        {/* ==================================================
-            1. TOP FLOATING HEADER
-            ================================================== */}
+      {/* ==================================================
+          1. TOP FIXED FLOATING HEADER (Stays Pinned On Scroll)
+          ================================================== */}
+      <div className={styles.headerWrapper}>
         <header className={styles.header}>
           <div className={styles.brand}>
             <SlideDropLogo size={36} />
@@ -1238,6 +1239,9 @@ export default function Home() {
             </button>
           </div>
         </header>
+      </div>
+
+      <div className={styles.shell}>
 
         {/* Reconnecting Alert */}
         {currentStatus === "RECONNECTING" && (
